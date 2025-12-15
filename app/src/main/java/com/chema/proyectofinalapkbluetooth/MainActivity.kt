@@ -12,6 +12,9 @@ import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.Message
 import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
@@ -32,6 +35,47 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rvDevices: RecyclerView
     private lateinit var deviceAdapter: BluetoothDeviceAdapter
     private val deviceList = ArrayList<BluetoothDevice>()
+
+    // Servicio de Bluetooth
+    private var bluetoothService: BluetoothService? = null
+    private var connectedDeviceName: String? = null
+
+    // Handler para recibir mensajes del BluetoothService
+    private val handler = object : Handler(Looper.getMainLooper()) {
+        override fun handleMessage(msg: Message) {
+            when (msg.what) {
+                BluetoothService.MESSAGE_STATE_CHANGE -> {
+                    when (msg.arg1) {
+                        BluetoothService.STATE_CONNECTED -> {
+                            tvStatus.text = "Estado: Conectado a $connectedDeviceName"
+                            deviceAdapter.notifyDataSetChanged()
+                        }
+                        BluetoothService.STATE_CONNECTING -> {
+                            tvStatus.text = "Estado: Conectando..."
+                        }
+                        BluetoothService.STATE_NONE -> {
+                            tvStatus.text = "Estado: Inactivo"
+                        }
+                    }
+                }
+                BluetoothService.MESSAGE_WRITE -> {
+                    // Mensaje enviado (opcional: actualizar UI)
+                }
+                BluetoothService.MESSAGE_READ -> {
+                    // Mensaje recibido (opcional: actualizar UI con datos recibidos)
+                    // val readBuf = msg.obj as ByteArray
+                    // val readMessage = String(readBuf, 0, msg.arg1)
+                }
+                BluetoothService.MESSAGE_DEVICE_NAME -> {
+                    connectedDeviceName = msg.data.getString(BluetoothService.DEVICE_NAME)
+                    Toast.makeText(applicationContext, "Conectado a $connectedDeviceName", Toast.LENGTH_SHORT).show()
+                }
+                BluetoothService.MESSAGE_TOAST -> {
+                    Toast.makeText(applicationContext, msg.data.getString(BluetoothService.TOAST), Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
 
     // Receiver para detectar dispositivos encontrados
     private val receiver = object : BroadcastReceiver() {
@@ -71,6 +115,9 @@ class MainActivity : AppCompatActivity() {
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
 
+        // Inicializar BluetoothService
+        bluetoothService = BluetoothService(handler)
+
         // Configurar botones
         btnScan.setOnClickListener {
             if (checkPermissions()) {
@@ -93,9 +140,17 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onStart() {
+        super.onStart()
+        if (bluetoothService == null) {
+            bluetoothService = BluetoothService(handler)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(receiver)
+        bluetoothService?.stop()
     }
 
     @SuppressLint("MissingPermission")
@@ -116,8 +171,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun connectToDevice(device: BluetoothDevice) {
-        // Aquí iría la lógica de conexión
-        Toast.makeText(this, "Conectando a ${device.name ?: "Dispositivo"}", Toast.LENGTH_SHORT).show()
+        // Lógica de conexión usando BluetoothService
+        bluetoothService?.connect(device)
     }
 
     private fun openConfiguration() {
