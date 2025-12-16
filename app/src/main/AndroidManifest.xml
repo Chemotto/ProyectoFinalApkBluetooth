@@ -2,6 +2,9 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!-- Características requeridas -->
+    <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
+
     <!-- Permisos para Bluetooth clásico y BLE -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
@@ -11,7 +14,10 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <!-- Permisos para Android 12 (API 31) y superiores -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" />
+    <!-- 'neverForLocation' indica que no usamos el escaneo para geolocalizar, 
+         lo que permite escanear sin pedir permiso de ubicación física en Android 12+ -->
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" 
+                     android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
     <application

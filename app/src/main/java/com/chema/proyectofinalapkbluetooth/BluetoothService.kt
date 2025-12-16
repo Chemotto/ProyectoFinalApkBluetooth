@@ -3,21 +3,26 @@ package com.chema.proyectofinalapkbluetooth
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
+import android.content.Context
 import android.os.Bundle
 import android.os.Handler
-import android.os.Message
 import android.util.Log
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.UUID
 
-class BluetoothService(private val handler: Handler) {
+class BluetoothService(private val context: Context, private val handler: Handler) {
 
     private var connectThread: ConnectThread? = null
     private var connectedThread: ConnectedThread? = null
     private var state = STATE_NONE
+    
+    // Obtener BluetoothAdapter desde Context
+    private val bluetoothAdapter: BluetoothAdapter? =
+        (context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
 
     companion object {
         const val STATE_NONE = 0       // we're doing nothing
@@ -34,8 +39,7 @@ class BluetoothService(private val handler: Handler) {
         const val DEVICE_NAME = "device_name"
 
         // UUID estándar para SPP (Serial Port Profile)
-        // Esto funciona con la mayoría de módulos Bluetooth como HC-05, HC-06, etc.
-        private val MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        private val MY_UUID_SECURE = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
         private const val TAG = "BluetoothService"
     }
 
@@ -143,36 +147,93 @@ class BluetoothService(private val handler: Handler) {
 
     @SuppressLint("MissingPermission")
     private inner class ConnectThread(private val device: BluetoothDevice) : Thread() {
-        private val socket: BluetoothSocket? by lazy(LazyThreadSafetyMode.NONE) {
-            device.createRfcommSocketToServiceRecord(MY_UUID)
-        }
+        private var socket: BluetoothSocket? = null
 
         override fun run() {
             Log.i(TAG, "BEGIN mConnectThread")
-            // Cancelar descubrimiento porque ralentiza la conexión
-            BluetoothAdapter.getDefaultAdapter().cancelDiscovery()
+            bluetoothAdapter?.cancelDiscovery()
+            
+            // PAUSA CRÍTICA: Algunos chips BT necesitan tiempo tras cancelar discovery
+            try { Thread.sleep(600) } catch (e: InterruptedException) { }
 
+            var success = false
+            
+            // --- ESTRATEGIA 1: UUID Estándar Seguro ---
             try {
-                // Conectar
+                Log.d(TAG, "Intento 1: Secure SPP")
+                socket = device.createRfcommSocketToServiceRecord(MY_UUID_SECURE)
                 socket?.connect()
+                success = true
             } catch (e: IOException) {
-                Log.e(TAG, "Socket connect failed", e)
+                Log.e(TAG, "Fallo Intento 1", e)
+                closeSocket()
+            }
+
+            // --- ESTRATEGIA 2: UUID Estándar Inseguro ---
+            if (!success) {
                 try {
-                    socket?.close()
-                } catch (e2: IOException) {
-                    Log.e(TAG, "unable to close() socket during connection failure", e2)
+                    Log.d(TAG, "Intento 2: Insecure SPP")
+                    socket = device.createInsecureRfcommSocketToServiceRecord(MY_UUID_SECURE)
+                    socket?.connect()
+                    success = true
+                } catch (e: IOException) {
+                    Log.e(TAG, "Fallo Intento 2", e)
+                    closeSocket()
                 }
+            }
+            
+            // --- ESTRATEGIA 3: UUIDs Específicos del Dispositivo ---
+            // Si el dispositivo no usa SPP estándar, probamos con sus propios UUIDs
+            if (!success && device.uuids != null && device.uuids.isNotEmpty()) {
+                Log.d(TAG, "Intento 3: Probando UUIDs del dispositivo (${device.uuids.size} encontrados)")
+                for (uuidParcel in device.uuids) {
+                    try {
+                        val uuid = uuidParcel.uuid
+                        Log.d(TAG, "Probando conexión con UUID: $uuid")
+                        socket = device.createRfcommSocketToServiceRecord(uuid)
+                        socket?.connect()
+                        success = true
+                        Log.d(TAG, "¡Conectado con UUID específico!")
+                        break
+                    } catch (e: IOException) {
+                        Log.w(TAG, "Falló UUID específico")
+                        closeSocket()
+                    }
+                }
+            }
+
+            // --- ESTRATEGIA 4: Reflexión (Fuerza bruta al canal 1) ---
+            if (!success) {
+                try {
+                    Log.d(TAG, "Intento 4: Reflexión (Fallback)")
+                    val m = device.javaClass.getMethod("createRfcommSocket", Int::class.javaPrimitiveType)
+                    socket = m.invoke(device, 1) as BluetoothSocket
+                    socket?.connect()
+                    success = true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Fallo Intento 4", e)
+                    closeSocket()
+                }
+            }
+
+            if (!success || socket == null) {
                 connectionFailed()
                 return
             }
 
-            // Resetear el hilo de conexión ya que hemos terminado
             synchronized(this@BluetoothService) {
                 connectThread = null
             }
 
             // Iniciar el hilo conectado
-            socket?.let { connected(it, device) }
+            connected(socket!!, device)
+        }
+        
+        private fun closeSocket() {
+            try {
+                socket?.close()
+            } catch (e2: IOException) { }
+            socket = null
         }
 
         fun cancel() {
@@ -191,11 +252,9 @@ class BluetoothService(private val handler: Handler) {
 
         override fun run() {
             Log.i(TAG, "BEGIN mConnectedThread")
-            while (state == STATE_CONNECTED) {
+            while (this@BluetoothService.state == STATE_CONNECTED) {
                 try {
-                    // Leer desde el InputStream
                     val bytes = inputStream.read(buffer)
-                    // Enviar los bytes obtenidos a la Actividad UI
                     handler.obtainMessage(MESSAGE_READ, bytes, -1, buffer).sendToTarget()
                 } catch (e: IOException) {
                     Log.e(TAG, "disconnected", e)
@@ -208,7 +267,6 @@ class BluetoothService(private val handler: Handler) {
         fun write(bytes: ByteArray) {
             try {
                 outputStream.write(bytes)
-                // Compartir el mensaje enviado con la UI Activity
                 handler.obtainMessage(MESSAGE_WRITE, -1, -1, bytes).sendToTarget()
             } catch (e: IOException) {
                 Log.e(TAG, "Exception during write", e)
@@ -227,7 +285,7 @@ class BluetoothService(private val handler: Handler) {
     private fun connectionFailed() {
         val msg = handler.obtainMessage(MESSAGE_TOAST)
         val bundle = Bundle()
-        bundle.putString(TOAST, "No se pudo conectar al dispositivo")
+        bundle.putString(TOAST, "Error al conectar. Verifica que el dispositivo esté encendido.")
         msg.data = bundle
         handler.sendMessage(msg)
         setState(STATE_NONE)
