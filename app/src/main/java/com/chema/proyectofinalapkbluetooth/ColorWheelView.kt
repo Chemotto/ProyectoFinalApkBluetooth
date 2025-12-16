@@ -13,10 +13,7 @@ import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
 import kotlin.math.atan2
-import kotlin.math.cos
 import kotlin.math.min
-import kotlin.math.pow
-import kotlin.math.sin
 import kotlin.math.sqrt
 
 class ColorWheelView @JvmOverloads constructor(
@@ -67,24 +64,29 @@ class ColorWheelView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         canvas.drawCircle(centerX, centerY, radius, paint)
-        
-        // Dibujar indicador de selección (círculo pequeño)
-        // (Opcional, por simplicidad dibujamos solo la rueda base)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        // Manejamos ACTION_DOWN y ACTION_MOVE para permitir arrastrar y seleccionar
         when (event.action) {
-            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE, MotionEvent.ACTION_UP -> {
+            MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
                 val x = event.x - centerX
                 val y = event.y - centerY
                 val dist = sqrt(x * x + y * y)
 
-                if (dist <= radius) {
+                // Permitimos tocar un poco fuera del radio visible (hasta 1.1x) para facilitar la selección de bordes
+                if (dist <= radius * 1.1f) {
                     selectedColor = getColorAt(event.x, event.y)
                     onColorChangedListener?.invoke(selectedColor)
-                    performClick() // Accesibilidad
-                    return true
+                    
+                    // Solo llamamos performClick en UP para cumplir con accesibilidad, 
+                    // pero actualizamos color en movimiento fluido
+                    return true 
                 }
+            }
+            MotionEvent.ACTION_UP -> {
+                performClick()
+                return true
             }
         }
         return super.onTouchEvent(event)
@@ -95,19 +97,22 @@ class ColorWheelView @JvmOverloads constructor(
     }
 
     private fun getColorAt(x: Float, y: Float): Int {
-        // Convertir coordenadas a HSV
         val dx = x - centerX
         val dy = y - centerY
-        val dist = sqrt(dx.pow(2) + dy.pow(2))
+        val dist = sqrt(dx * dx + dy * dy)
         
-        // Saturation depende de la distancia al centro
-        val saturation = dist / radius
+        // Saturación: Distancia desde el centro (0 al centro, 1 en el borde)
+        // Limitamos a 1f para que no se sature de más si tocamos un poco fuera
+        val saturation = (dist / radius).coerceIn(0f, 1f)
         
-        // Hue depende del ángulo
+        // Brillo (Value): Siempre al máximo para colores vivos
+        val value = 1f
+        
+        // Tono (Hue): Ángulo
         var angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
         if (angle < 0) angle += 360f
         
-        val hsv = floatArrayOf(angle, saturation, 1f)
+        val hsv = floatArrayOf(angle, saturation, value)
         return Color.HSVToColor(hsv)
     }
 }

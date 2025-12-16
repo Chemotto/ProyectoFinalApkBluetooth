@@ -23,6 +23,7 @@ import android.os.Message
 import android.util.Log
 import android.view.View
 import android.widget.Button
+import android.widget.EditText
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.TextView
@@ -45,6 +46,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var rvDevices: RecyclerView
     private lateinit var layoutControls: ScrollView
     private lateinit var tvLog: TextView
+    private lateinit var etCommand: EditText
+    private lateinit var btnSend: Button
     
     // Vistas de control
     private lateinit var colorWheel: ColorWheelView
@@ -63,6 +66,7 @@ class MainActivity : AppCompatActivity() {
     private var bluetoothGatt: BluetoothGatt? = null
     private var bleWriteCharacteristic: BluetoothGattCharacteristic? = null
     private var isBleConnected = false
+    private var isBleConnecting = false
 
     private var connectedDeviceName: String? = null
     private val stringBuffer = StringBuilder()
@@ -86,7 +90,8 @@ class MainActivity : AppCompatActivity() {
                             tvStatus.text = "Estado: Conectando..."
                         }
                         BluetoothService.STATE_NONE -> {
-                            if (!isBleConnected) {
+                            // Solo mostramos "Inactivo" si no estamos conectados NI intentando conectar por BLE
+                            if (!isBleConnected && !isBleConnecting) {
                                 tvStatus.text = "Estado: Inactivo"
                                 showControls(false)
                             }
@@ -103,7 +108,7 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(applicationContext, "Conectado a $connectedDeviceName", Toast.LENGTH_SHORT).show()
                 }
                 BluetoothService.MESSAGE_TOAST -> {
-                    if (!isBleConnected) { 
+                    if (!isBleConnected && !isBleConnecting) { 
                         Toast.makeText(applicationContext, msg.data.getString(BluetoothService.TOAST), Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -115,20 +120,40 @@ class MainActivity : AppCompatActivity() {
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if (newState == BluetoothProfile.STATE_CONNECTED) {
-                isBleConnected = true
-                connectedDeviceName = gatt.device.name ?: "Dispositivo BLE"
-                runOnUiThread {
-                    tvStatus.text = "Conectado a $connectedDeviceName. Buscando servicios..."
+            Log.d(TAG, "onConnectionStateChange: status=$status newState=$newState")
+            
+            if (status == BluetoothGatt.GATT_SUCCESS) {
+                if (newState == BluetoothProfile.STATE_CONNECTED) {
+                    isBleConnecting = false
+                    isBleConnected = true
+                    connectedDeviceName = gatt.device.name ?: "Dispositivo BLE"
+                    runOnUiThread {
+                        tvStatus.text = "Conectado. Buscando servicios..."
+                    }
+                    // Retraso pequeño antes de descubrir servicios ayuda a veces
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        gatt.discoverServices()
+                    }, 300)
+                    
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                    isBleConnecting = false
+                    isBleConnected = false
+                    runOnUiThread {
+                        tvStatus.text = "Desconectado (BLE)"
+                        showControls(false)
+                    }
+                    gatt.close()
                 }
-                gatt.discoverServices()
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+            } else {
+                // Error en la conexión (ej: 133)
+                Log.e(TAG, "Error BLE: $status")
+                isBleConnecting = false
                 isBleConnected = false
                 runOnUiThread {
-                    tvStatus.text = "Desconectado (BLE)"
-                    showControls(false)
-                    Toast.makeText(this@MainActivity, "Desconectado", Toast.LENGTH_SHORT).show()
+                    tvStatus.text = "Error de conexión: $status"
+                    Toast.makeText(this@MainActivity, "Error al conectar ($status). Reintenta.", Toast.LENGTH_SHORT).show()
                 }
+                gatt.close()
             }
         }
 
@@ -185,7 +210,7 @@ class MainActivity : AppCompatActivity() {
                     tvStatus.text = "Estado: Escaneando..."
                 }
                 BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
-                    if (bluetoothService?.getState() != BluetoothService.STATE_CONNECTED && !isBleConnected) {
+                    if (bluetoothService?.getState() != BluetoothService.STATE_CONNECTED && !isBleConnected && !isBleConnecting) {
                          if (deviceList.isEmpty()) {
                             tvStatus.text = "Estado: Escaneo finalizado (Sin resultados)"
                         } else {
@@ -208,6 +233,8 @@ class MainActivity : AppCompatActivity() {
         rvDevices = findViewById(R.id.rvDevices)
         layoutControls = findViewById(R.id.layoutControls)
         tvLog = findViewById(R.id.tvLog)
+        etCommand = findViewById(R.id.etCommand)
+        btnSend = findViewById(R.id.btnSend)
         
         colorWheel = findViewById(R.id.colorWheel)
         viewSelectedColor = findViewById(R.id.viewSelectedColor)
@@ -247,6 +274,19 @@ class MainActivity : AppCompatActivity() {
         
         btnOn.setOnClickListener { sendPowerCommand(true) }
         btnOff.setOnClickListener { sendPowerCommand(false) }
+
+        btnSend.setOnClickListener {
+            val message = etCommand.text.toString()
+            if (message.isNotEmpty()) {
+                try {
+                    val bytes = hexStringToByteArray(message)
+                    sendBytes(bytes)
+                    etCommand.text.clear()
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Hex inválido (usa formato FFFFFF)", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
 
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_FOUND)
@@ -295,6 +335,7 @@ class MainActivity : AppCompatActivity() {
     private fun logMessage(msg: String) {
         stringBuffer.append(msg + "\n")
         tvLog.text = stringBuffer.toString()
+        // El scroll solo funcionará si la vista es visible, pero no causa error
         layoutControls.post {
             layoutControls.fullScroll(View.FOCUS_DOWN)
         }
@@ -304,7 +345,7 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
-        // Detener escaneo
+        // Aseguramos detener el escaneo
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
              if (bluetoothAdapter.isDiscovering) {
                  bluetoothAdapter.cancelDiscovery()
@@ -312,17 +353,33 @@ class MainActivity : AppCompatActivity() {
         }
         
         val type = device.type
-        if (type == BluetoothDevice.DEVICE_TYPE_LE) {
-            connectBle(device)
-        } else {
-            bluetoothService?.connect(device)
-        }
+        Log.d(TAG, "Conectando a dispositivo: ${device.name}, Tipo: $type")
+        
+        // Retardo para estabilizar el hardware BT (Crucial para evitar errores 133)
+        Handler(Looper.getMainLooper()).postDelayed({
+            // LÓGICA ROBUSTA MEJORADA:
+            // Si no es Clásico, asumimos BLE (cubre Dual, LE y Unknown)
+            if (type != BluetoothDevice.DEVICE_TYPE_CLASSIC) {
+                 Log.d(TAG, "Intentando conexión BLE (Por defecto)")
+                 isBleConnecting = true
+                 bluetoothService?.stop()
+                 connectBle(device)
+            } else {
+                 Log.d(TAG, "Intentando conexión Clásica (Tipo CLASSIC)")
+                 isBleConnecting = false
+                 disconnectBle()
+                 bluetoothService?.connect(device)
+            }
+        }, 600) // 600ms de pausa
     }
     
     @SuppressLint("MissingPermission")
     private fun connectBle(device: BluetoothDevice) {
         disconnectBle()
         tvStatus.text = "Conectando (BLE)..."
+        
+        // Simplificado: Usar connectGatt estándar (TRANSPORT_AUTO) para mayor compatibilidad
+        // Esto permite que Android decida si usar LE o Classic según la publicidad del dispositivo
         bluetoothGatt = device.connectGatt(this, false, gattCallback)
     }
     
@@ -335,6 +392,7 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun disconnect() {
+        isBleConnecting = false
         bluetoothService?.stop()
         disconnectBle()
         showControls(false)
@@ -363,8 +421,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun sendPowerCommand(on: Boolean) {
         val command = when(rgProtocol.checkedRadioButtonId) {
-            R.id.rbMagic -> if (on) byteArrayOf(0x7e, 0x04, 0x04, 0xf0.toByte(), 0x00, 0x01, 0xff.toByte(), 0x00, 0xef.toByte()) 
-                                else byteArrayOf(0x7e, 0x04, 0x04, 0x00, 0x00, 0x00, 0xff.toByte(), 0x00, 0xef.toByte())
+            R.id.rbMagic -> if (on) byteArrayOf(0x71, 0x23, 0x0F, 0xA3.toByte()) 
+                                else byteArrayOf(0x71, 0x24, 0x0F, 0xA4.toByte())
             R.id.rbGeneric -> if (on) byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) 
                                 else byteArrayOf(0x00, 0x00, 0x00)
             else -> if (on) "ON" else "OFF"
@@ -380,8 +438,10 @@ class MainActivity : AppCompatActivity() {
     // --- Protocolos Específicos ---
     
     private fun createMagicHomeCommand(r: Int, g: Int, b: Int): ByteArray {
-        // Formato: 56 [r] [g] [b] 00 f0 aa
-        return byteArrayOf(0x56.toByte(), r.toByte(), g.toByte(), b.toByte(), 0x00, 0xf0.toByte(), 0xaa.toByte())
+        // Formato BLE Magic Home: 31 RR GG BB 00 00 0F [Checksum]
+        val sum = 0x31 + r + g + b + 0x00 + 0x00 + 0x0F
+        val checksum = (sum and 0xFF).toByte()
+        return byteArrayOf(0x31, r.toByte(), g.toByte(), b.toByte(), 0x00, 0x00, 0x0F, checksum)
     }
 
     @SuppressLint("MissingPermission")
@@ -428,6 +488,17 @@ class MainActivity : AppCompatActivity() {
     }
     
     // --- Utilidades ---
+    
+    private fun hexStringToByteArray(s: String): ByteArray {
+        val len = s.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(s[i], 16) shl 4) + Character.digit(s[i + 1], 16)).toByte()
+            i += 2
+        }
+        return data
+    }
     
     private fun bytesToHex(bytes: ByteArray): String {
         val sb = StringBuilder()

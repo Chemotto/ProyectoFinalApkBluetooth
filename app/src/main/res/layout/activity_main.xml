@@ -107,8 +107,10 @@
             <!-- Rueda de Color (Color Wheel) -->
             <com.chema.proyectofinalapkbluetooth.ColorWheelView
                 android:id="@+id/colorWheel"
-                android:layout_width="250dp"
-                android:layout_height="250dp"
+                android:layout_width="300dp"
+                android:layout_height="300dp"
+                android:clickable="true"
+                android:focusable="true"
                 android:layout_marginBottom="24dp"/>
 
             <!-- Indicador de color seleccionado -->
@@ -142,11 +144,29 @@
                     android:backgroundTint="#757575"/>
             </LinearLayout>
 
+            <!-- Entrada Manual (Restaurada por si falla el protocolo automático) -->
+             <EditText
+                android:id="@+id/etCommand"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Comando Hex Manual (ej: 71230FA3)" 
+                android:gravity="center"
+                android:layout_marginBottom="8dp"/>
+
+            <Button
+                android:id="@+id/btnSend"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Enviar Manual"
+                android:layout_marginBottom="16dp"/>
+
+            <!-- Consola Oculta -->
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Consola (Debug)"
                 android:textStyle="bold"
+                android:visibility="gone"
                 android:layout_marginBottom="8dp"/>
 
             <TextView
@@ -157,6 +177,7 @@
                 android:background="#EEEEEE"
                 android:padding="8dp"
                 android:text="..."
+                android:visibility="gone"
                 android:layout_marginTop="8dp"/>
 
         </LinearLayout>
