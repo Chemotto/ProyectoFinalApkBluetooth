@@ -73,30 +73,51 @@
                 android:gravity="center"
                 android:layout_marginBottom="16dp"/>
 
-            <!-- Selector de Protocolo -->
-            <RadioGroup
-                android:id="@+id/rgProtocol"
+            <!-- Selector de Protocolo (Horizontal Scroll para más opciones) -->
+            <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="horizontal"
+                android:text="Protocolo (Prueba si no responde):"
+                android:textSize="12sp"
+                android:layout_marginBottom="4dp"/>
+                
+            <HorizontalScrollView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
                 android:layout_marginBottom="16dp">
-                <RadioButton
-                    android:id="@+id/rbMagic"
+                
+                <RadioGroup
+                    android:id="@+id/rgProtocol"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Magic Home"
-                    android:checked="true"/>
-                <RadioButton
-                    android:id="@+id/rbGeneric"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Genérico"/>
-                <RadioButton
-                    android:id="@+id/rbText"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Texto"/>
-            </RadioGroup>
+                    android:orientation="horizontal">
+                    
+                    <RadioButton
+                        android:id="@+id/rbMagic"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Magic"
+                        android:checked="true"/>
+                        
+                    <RadioButton
+                        android:id="@+id/rbTriones"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Triones"/>
+
+                    <RadioButton
+                        android:id="@+id/rbZengge"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Zengge"/>
+                        
+                    <RadioButton
+                        android:id="@+id/rbGeneric"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Raw"/>
+                </RadioGroup>
+            </HorizontalScrollView>
 
             <!-- Rueda de Color (Color Wheel) -->
             <com.chema.proyectofinalapkbluetooth.ColorWheelView

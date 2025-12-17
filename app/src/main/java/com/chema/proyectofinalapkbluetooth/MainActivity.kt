@@ -62,6 +62,10 @@ class MainActivity : AppCompatActivity() {
     private var lastSelectedColor: Int = Color.WHITE
     private var isLightOn = true
     
+    // Control de flujo (Throttling) para no saturar Bluetooth
+    private var lastSendTime: Long = 0
+    private val SEND_INTERVAL_MS = 150 // Enviar máximo cada 150ms
+    
     private lateinit var deviceAdapter: BluetoothDeviceAdapter
     private val deviceList = ArrayList<BluetoothDevice>()
 
@@ -268,22 +272,29 @@ class MainActivity : AppCompatActivity() {
             disconnect()
         }
         
+        // Listener de cambio de color (mientras se mueve el dedo) - Con Throttling
         colorWheel.onColorChangedListener = { color ->
             lastSelectedColor = color
-            updatePreviewAndSend()
+            updatePreviewAndSendThrottled()
+        }
+        
+        // Listener de color final (al levantar el dedo) - Envío inmediato
+        colorWheel.onColorSelectedListener = { color ->
+            lastSelectedColor = color
+            updatePreviewAndSend() // Envío forzado al final
         }
         
         sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (fromUser) {
-                    updatePreviewColorOnly()
+                    updatePreviewAndSendThrottled()
                 }
             }
 
             override fun onStartTrackingTouch(seekBar: SeekBar?) { }
 
             override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                updatePreviewAndSend()
+                updatePreviewAndSend() // Envío forzado al final
             }
         })
         
@@ -352,10 +363,16 @@ class MainActivity : AppCompatActivity() {
     
     // --- Lógica de Brillo y Color ---
     
-    private fun updatePreviewColorOnly() {
+    private fun updatePreviewAndSendThrottled() {
         val brightness = sbBrightness.progress / 100f
         val colorWithBrightness = applyBrightness(lastSelectedColor, brightness)
         viewSelectedColor.setBackgroundColor(colorWithBrightness)
+        
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastSendTime > SEND_INTERVAL_MS) {
+            sendColor(colorWithBrightness)
+            lastSendTime = currentTime
+        }
     }
     
     private fun updatePreviewAndSend() {
@@ -363,6 +380,7 @@ class MainActivity : AppCompatActivity() {
         val colorWithBrightness = applyBrightness(lastSelectedColor, brightness)
         viewSelectedColor.setBackgroundColor(colorWithBrightness)
         sendColor(colorWithBrightness)
+        lastSendTime = System.currentTimeMillis() // Reseteamos el timer
     }
     
     private fun applyBrightness(color: Int, factor: Float): Int {
@@ -427,7 +445,7 @@ class MainActivity : AppCompatActivity() {
         tvStatus.text = "Desconectado"
     }
     
-    // --- Envío de Comandos BLE ---
+    // --- Envío de Comandos BLE (SOPORTE MULTI-PROTOCOLO) ---
     
     private fun sendColor(color: Int) {
         val r = Color.red(color)
@@ -436,6 +454,8 @@ class MainActivity : AppCompatActivity() {
 
         val command = when(rgProtocol.checkedRadioButtonId) {
             R.id.rbMagic -> createMagicHomeColorCommand(r, g, b)
+            R.id.rbTriones -> byteArrayOf(0x56, r.toByte(), g.toByte(), b.toByte(), 0x00, 0xF0.toByte(), 0xAA.toByte())
+            R.id.rbZengge -> byteArrayOf(0x7E, 0x00, 0x05, 0x03, r.toByte(), g.toByte(), b.toByte(), 0x00, 0xEF.toByte())
             R.id.rbGeneric -> byteArrayOf(r.toByte(), g.toByte(), b.toByte())
             else -> "$r,$g,$b" 
         }
@@ -449,11 +469,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun sendPowerCommand(on: Boolean) {
         val command = when(rgProtocol.checkedRadioButtonId) {
-            // Códigos BLE para Magic Home (0x71...)
+            // Protocolo Magic Home
             R.id.rbMagic -> if (on) byteArrayOf(0x71, 0x23, 0x0F, 0xA3.toByte()) 
                                 else byteArrayOf(0x71, 0x24, 0x0F, 0xA4.toByte())
+                                
+            // Protocolo Triones / HappyLighting
+            R.id.rbTriones -> if (on) byteArrayOf(0xCC.toByte(), 0x23, 0x33) 
+                                else byteArrayOf(0xCC.toByte(), 0x24, 0x33)
+            
+            // Protocolo Zengge
+            R.id.rbZengge -> if (on) byteArrayOf(0x7E, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0xEF.toByte()) // ON no siempre es estándar aquí
+                             else byteArrayOf(0x7E, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xEF.toByte())
+
+            // Genérico
             R.id.rbGeneric -> if (on) byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) 
                                 else byteArrayOf(0x00, 0x00, 0x00)
+                                
             else -> if (on) "ON" else "OFF"
         }
 
@@ -465,11 +496,10 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun sendEffectCommand(effectCode: Int) {
-        val speed = 0x10 // Velocidad media por defecto
+        val speed = 0x10 // Velocidad media
         val command = when(rgProtocol.checkedRadioButtonId) {
-            // Los códigos de efecto de Magic Home Clásico y BLE son diferentes.
-            // Este es el formato BLE: 81 [código] [velocidad] 99
             R.id.rbMagic -> byteArrayOf(0x81.toByte(), effectCode.toByte(), speed.toByte(), 0x99.toByte())
+            R.id.rbTriones -> byteArrayOf(0xBB.toByte(), effectCode.toByte(), speed.toByte(), 0x44)
             else -> null
         }
         
@@ -573,7 +603,8 @@ class MainActivity : AppCompatActivity() {
         } else if (bluetoothService?.getState() == BluetoothService.STATE_CONNECTED) {
             bluetoothService?.write(bytes)
         } else {
-            Toast.makeText(this, "No conectado", Toast.LENGTH_SHORT).show()
+            // Silenciar Toast si es muy frecuente
+            // Toast.makeText(this, "No conectado", Toast.LENGTH_SHORT).show()
         }
     }
     

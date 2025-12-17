@@ -33,8 +33,11 @@ class ColorWheelView @JvmOverloads constructor(
     private var selectorX = 0f
     private var selectorY = 0f
     
-    // Listener para notificar el cambio de color
+    // Listener para notificar el cambio de color (mientras se mueve)
     var onColorChangedListener: ((Int) -> Unit)? = null
+    
+    // Listener para notificar cuando se selecciona el color (al soltar)
+    var onColorSelectedListener: ((Int) -> Unit)? = null
 
     init {
         paint.style = Paint.Style.FILL
@@ -66,8 +69,7 @@ class ColorWheelView @JvmOverloads constructor(
     private fun updateShader() {
         if (radius <= 0) return
         
-        // CORRECCIÓN IMPORTANTE: Orden de colores alineado con cálculo HSV (Rojo -> Amarillo -> Verde...)
-        // Esto asegura que el color visual coincida con el color seleccionado
+        // Orden de colores alineado con cálculo HSV
         val colors = intArrayOf(
             Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN,
             Color.BLUE, Color.MAGENTA, Color.RED
@@ -112,6 +114,9 @@ class ColorWheelView @JvmOverloads constructor(
                 updateSelector(event.x, event.y)
                 performClick()
                 parent.requestDisallowInterceptTouchEvent(false)
+                
+                // Notificar que se ha terminado de seleccionar
+                onColorSelectedListener?.invoke(selectedColor)
                 return true
             }
         }
