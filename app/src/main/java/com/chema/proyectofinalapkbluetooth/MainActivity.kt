@@ -14,6 +14,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -61,6 +62,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnFade: Button
     private lateinit var btnMusicMode: Button
     
+    // Botones de favoritos
+    private lateinit var btnFav1: Button
+    private lateinit var btnFav2: Button
+    private lateinit var btnFav3: Button
+    private lateinit var btnFav4: Button
+    
     // Estado del color y encendido
     private var lastSelectedColor: Int = Color.WHITE
     private var isLightOn = true
@@ -81,6 +88,9 @@ class MainActivity : AppCompatActivity() {
     private var isBleConnected = false
     private var isBleConnecting = false
 
+    // Referencia al dispositivo que estamos intentando conectar (para guardar en preferencias)
+    private var pendingDevice: BluetoothDevice? = null
+
     private var connectedDeviceName: String? = null
     
     // AudioRecord (Micrófono) para modo música universal
@@ -92,6 +102,9 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         private const val TAG = "MainActivity"
+        private const val PREFS_NAME = "BluetoothPrefs"
+        private const val KEY_LAST_DEVICE = "last_device_address"
+        private const val KEY_FAV_COLOR_PREFIX = "fav_color_"
     }
 
     // Handler para recibir mensajes del BluetoothService (Clásico)
@@ -104,6 +117,8 @@ class MainActivity : AppCompatActivity() {
                             tvStatus.text = "Estado: Conectado a $connectedDeviceName (Clásico)"
                             deviceAdapter.notifyDataSetChanged()
                             showControls(true)
+                            // Guardar dispositivo conectado
+                            pendingDevice?.let { saveLastDevice(it.address) }
                         }
                         BluetoothService.STATE_CONNECTING -> {
                             tvStatus.text = "Estado: Conectando..."
@@ -141,6 +156,10 @@ class MainActivity : AppCompatActivity() {
                     isBleConnecting = false
                     isBleConnected = true
                     connectedDeviceName = gatt.device.name ?: "Dispositivo BLE"
+                    
+                    // Guardar dispositivo conectado
+                    saveLastDevice(gatt.device.address)
+                    
                     runOnUiThread {
                         tvStatus.text = "Conectado. Buscando servicios..."
                     }
@@ -252,6 +271,11 @@ class MainActivity : AppCompatActivity() {
         btnStrobe = findViewById(R.id.btnStrobe)
         btnFade = findViewById(R.id.btnFade)
         btnMusicMode = findViewById(R.id.btnMusicMode)
+        
+        btnFav1 = findViewById(R.id.btnFav1)
+        btnFav2 = findViewById(R.id.btnFav2)
+        btnFav3 = findViewById(R.id.btnFav3)
+        btnFav4 = findViewById(R.id.btnFav4)
 
         // Configurar RecyclerView
         deviceAdapter = BluetoothDeviceAdapter(deviceList) { device ->
@@ -314,6 +338,8 @@ class MainActivity : AppCompatActivity() {
         btnFade.setOnClickListener { sendEffectCommand(0x27) }
         
         btnMusicMode.setOnClickListener { toggleMusicMode() }
+        
+        setupFavoriteButtons()
 
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_FOUND)
@@ -326,6 +352,11 @@ class MainActivity : AppCompatActivity() {
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
+        }
+
+        // INTENTAR AUTOCONEXIÓN SI HAY PERMISOS
+        if (checkPermissions()) {
+            attemptAutoConnect()
         }
     }
 
@@ -346,6 +377,72 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(receiver)
         bluetoothService?.stop()
         disconnectBle()
+    }
+    
+    // --- Favoritos ---
+    
+    private fun setupFavoriteButtons() {
+        val buttons = listOf(btnFav1, btnFav2, btnFav3, btnFav4)
+        
+        buttons.forEachIndexed { index, button ->
+            // Cargar color guardado
+            val savedColor = loadFavoriteColor(index)
+            button.backgroundTintList = ColorStateList.valueOf(savedColor)
+            
+            // Click: Aplicar color
+            button.setOnClickListener {
+                val color = loadFavoriteColor(index)
+                lastSelectedColor = color
+                // Actualizar UI
+                viewSelectedColor.setBackgroundColor(color)
+                // Enviar color
+                sendColor(color)
+                Toast.makeText(this, "Color favorito ${index + 1} aplicado", Toast.LENGTH_SHORT).show()
+            }
+            
+            // Long Click: Guardar color actual
+            button.setOnLongClickListener {
+                saveFavoriteColor(index, lastSelectedColor)
+                button.backgroundTintList = ColorStateList.valueOf(lastSelectedColor)
+                Toast.makeText(this, "Color guardado en favorito ${index + 1}", Toast.LENGTH_SHORT).show()
+                true
+            }
+        }
+    }
+    
+    private fun saveFavoriteColor(index: Int, color: Int) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putInt(KEY_FAV_COLOR_PREFIX + index, color).apply()
+    }
+    
+    private fun loadFavoriteColor(index: Int): Int {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // Por defecto: Gris claro si no hay nada guardado
+        return prefs.getInt(KEY_FAV_COLOR_PREFIX + index, Color.LTGRAY)
+    }
+    
+    // --- Gestión de Preferencias (Auto-Connect) ---
+
+    private fun saveLastDevice(address: String) {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putString(KEY_LAST_DEVICE, address).apply()
+        Log.d(TAG, "Dispositivo guardado para auto-conexión: $address")
+    }
+
+    private fun attemptAutoConnect() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val lastAddress = prefs.getString(KEY_LAST_DEVICE, null)
+        
+        if (lastAddress != null && bluetoothAdapter.isEnabled) {
+            try {
+                val device = bluetoothAdapter.getRemoteDevice(lastAddress)
+                Log.d(TAG, "Intentando auto-conexión a: $lastAddress")
+                Toast.makeText(this, "Reconectando...", Toast.LENGTH_SHORT).show()
+                connectToDevice(device)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error en auto-conexión: ${e.message}")
+            }
+        }
     }
     
     private fun showControls(connected: Boolean) {
@@ -406,6 +503,9 @@ class MainActivity : AppCompatActivity() {
              }
         }
         
+        // Guardamos referencia para saber qué guardar si conecta con éxito
+        pendingDevice = device
+        
         val type = device.type
         Log.d(TAG, "Conectando a dispositivo: ${device.name}, Tipo: $type")
         
@@ -449,6 +549,9 @@ class MainActivity : AppCompatActivity() {
         disconnectBle()
         showControls(false)
         tvStatus.text = "Desconectado"
+        // Opcional: ¿Olvidar dispositivo al desconectar manualmente?
+        // val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        // prefs.edit().remove(KEY_LAST_DEVICE).apply()
     }
     
     // --- Envío de Comandos BLE (SOPORTE MULTI-PROTOCOLO) ---

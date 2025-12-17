@@ -149,8 +149,49 @@
                 android:layout_height="wrap_content"
                 android:max="100"
                 android:progress="100"
-                android:layout_marginBottom="24dp"
+                android:layout_marginBottom="16dp"
                 android:paddingHorizontal="16dp"/>
+
+            <!-- Favoritos -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Favoritos (Manten pulsado para guardar)"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center"
+                android:layout_marginBottom="24dp">
+
+                <Button
+                    android:id="@+id/btnFav1"
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:backgroundTint="#CCCCCC"
+                    android:layout_margin="4dp"/>
+                <Button
+                    android:id="@+id/btnFav2"
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:backgroundTint="#CCCCCC"
+                    android:layout_margin="4dp"/>
+                <Button
+                    android:id="@+id/btnFav3"
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:backgroundTint="#CCCCCC"
+                    android:layout_margin="4dp"/>
+                <Button
+                    android:id="@+id/btnFav4"
+                    android:layout_width="60dp"
+                    android:layout_height="60dp"
+                    android:backgroundTint="#CCCCCC"
+                    android:layout_margin="4dp"/>
+            </LinearLayout>
 
             <!-- Botones de Efectos y Power -->
             <TextView
