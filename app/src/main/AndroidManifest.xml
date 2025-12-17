@@ -5,20 +5,17 @@
     <!-- Características requeridas -->
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
 
-    <!-- Permisos para Bluetooth clásico y BLE -->
+    <!-- Permisos para Bluetooth -->
     <uses-permission android:name="android.permission.BLUETOOTH" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" />
-    
-    <!-- Permisos de ubicación necesarios para escanear en versiones anteriores a Android 12 -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
-
-    <!-- Permisos para Android 12 (API 31) y superiores -->
-    <!-- 'neverForLocation' indica que no usamos el escaneo para geolocalizar, 
-         lo que permite escanear sin pedir permiso de ubicación física en Android 12+ -->
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" 
-                     android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!-- Permiso para acceder al micrófono -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
 
     <application
         android:allowBackup="true"

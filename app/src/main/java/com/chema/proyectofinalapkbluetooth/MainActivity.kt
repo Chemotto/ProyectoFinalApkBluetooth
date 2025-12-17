@@ -15,6 +15,10 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.audiofx.Visualizer.OnDataCaptureListener
+import android.media.audiofx.Visualizer.SUCCESS
+import android.media.audiofx.Visualizer.STATE_ENABLED
+import android.media.audiofx.Visualizer.STATE_INITIALIZED
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -57,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnFlash: Button
     private lateinit var btnStrobe: Button
     private lateinit var btnFade: Button
+    private lateinit var btnMusicMode: Button
     
     // Estado del color
     private var lastSelectedColor: Int = Color.WHITE
@@ -74,6 +79,10 @@ class MainActivity : AppCompatActivity() {
     private var isBleConnecting = false
 
     private var connectedDeviceName: String? = null
+    
+    // Visualizador de Audio
+    private var visualizer: android.media.audiofx.Visualizer? = null
+    private var isMusicModeActive = false
 
     companion object {
         private const val TAG = "MainActivity"
@@ -119,6 +128,8 @@ class MainActivity : AppCompatActivity() {
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
+            Log.d(TAG, "onConnectionStateChange: status=$status newState=$newState")
+            
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     isBleConnecting = false
@@ -127,6 +138,7 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         tvStatus.text = "Conectado. Buscando servicios..."
                     }
+                    // Retraso pequeño antes de descubrir servicios ayuda a veces
                     Handler(Looper.getMainLooper()).postDelayed({
                         gatt.discoverServices()
                     }, 300)
@@ -141,12 +153,13 @@ class MainActivity : AppCompatActivity() {
                     gatt.close()
                 }
             } else {
+                // ERROR DE CONEXIÓN BLE: Proporcionar feedback más útil
                 Log.e(TAG, "Error BLE: $status")
                 isBleConnecting = false
                 isBleConnected = false
                 runOnUiThread {
-                    tvStatus.text = "Error de conexión: $status"
-                    Toast.makeText(this@MainActivity, "Error al conectar ($status). Reintenta.", Toast.LENGTH_SHORT).show()
+                    tvStatus.text = "Error de conexión BLE: $status"
+                    Toast.makeText(this@MainActivity, "Error al conectar BLE (Status: $status). Reintenta.", Toast.LENGTH_LONG).show()
                 }
                 gatt.close()
             }
@@ -161,10 +174,14 @@ class MainActivity : AppCompatActivity() {
                         showControls(true)
                     } else {
                         tvStatus.text = "Conectado (Sin escritura)"
+                        Toast.makeText(this@MainActivity, "Error: No se encontró característica de escritura BLE.", Toast.LENGTH_LONG).show()
                     }
                 }
             } else {
                 Log.w(TAG, "onServicesDiscovered recibió: $status")
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "Error al descubrir servicios BLE (Status: $status).", Toast.LENGTH_LONG).show()
+                }
             }
         }
 
@@ -191,7 +208,7 @@ class MainActivity : AppCompatActivity() {
                         Log.d(TAG, "Encontrado: ${it.name} [${it.address}] Tipo: $typeStr")
                         if (deviceList.none { d -> d.address == it.address }) {
                             deviceList.add(it)
-                            deviceAdapter.notifyItemInserted(deviceList.size - 1)
+                            deviceAdapter.notifyItemInserted(deviceList.size - 1);
                         }
                     }
                 }
@@ -231,6 +248,7 @@ class MainActivity : AppCompatActivity() {
         btnFlash = findViewById(R.id.btnFlash)
         btnStrobe = findViewById(R.id.btnStrobe)
         btnFade = findViewById(R.id.btnFade)
+        btnMusicMode = findViewById(R.id.btnMusicMode)
 
         // Configurar RecyclerView
         deviceAdapter = BluetoothDeviceAdapter(deviceList) { device ->
@@ -282,6 +300,8 @@ class MainActivity : AppCompatActivity() {
         btnFlash.setOnClickListener { sendEffectCommand(0x25) } // Ejemplo de código para Flash
         btnStrobe.setOnClickListener { sendEffectCommand(0x26) } // Ejemplo de código para Strobe
         btnFade.setOnClickListener { sendEffectCommand(0x27) } // Ejemplo de código para Fade (transición suave)
+        
+        btnMusicMode.setOnClickListener { toggleMusicMode() }
 
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_FOUND)
@@ -304,6 +324,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        stopVisualizer()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         unregisterReceiver(receiver)
@@ -322,6 +347,7 @@ class MainActivity : AppCompatActivity() {
             layoutControls.visibility = View.GONE
             btnScan.isEnabled = true
             btnDisconnect.isEnabled = false
+            stopVisualizer() // Detener visualizador si nos desconectamos
         }
     }
     
@@ -364,26 +390,34 @@ class MainActivity : AppCompatActivity() {
         val type = device.type
         Log.d(TAG, "Conectando a dispositivo: ${device.name}, Tipo: $type")
         
+        // Retardo para estabilizar el hardware BT (Crucial para evitar errores 133)
         Handler(Looper.getMainLooper()).postDelayed({
+            // Preferimos BLE para casi todo, a menos que sea explícitamente Classic.
+            // Esto cubre dispositivos LE, DUAL y UNKNOWN que suelen ser BLE.
             if (type != BluetoothDevice.DEVICE_TYPE_CLASSIC) {
                  Log.d(TAG, "Intentando conexión BLE (Por defecto)")
                  isBleConnecting = true
-                 bluetoothService?.stop()
+                 bluetoothService?.stop() // Asegurar que el servicio clásico esté detenido
                  connectBle(device)
             } else {
                  Log.d(TAG, "Intentando conexión Clásica (Tipo CLASSIC)")
                  isBleConnecting = false
-                 disconnectBle()
+                 disconnectBle() // Asegurar que BLE esté desconectado
                  bluetoothService?.connect(device)
             }
-        }, 600)
+        }, 600) // 600ms de pausa
     }
     
     @SuppressLint("MissingPermission")
     private fun connectBle(device: BluetoothDevice) {
         disconnectBle()
         tvStatus.text = "Conectando (BLE)..."
-        bluetoothGatt = device.connectGatt(this, false, gattCallback)
+        // Usar TRANSPORT_LE para forzar la conexión BLE, mejor para dispositivos Dual/LE
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        } else {
+            bluetoothGatt = device.connectGatt(this, false, gattCallback)
+        }
     }
     
     @SuppressLint("MissingPermission")
@@ -439,7 +473,6 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun sendEffectCommand(effectCode: Int) {
-        // La velocidad es un valor de 0x01 (más rápido) a 0x1F (más lento)
         val speed = 0x10 // Velocidad media por defecto
         val command = when(rgProtocol.checkedRadioButtonId) {
             R.id.rbMagic -> byteArrayOf(0x56, effectCode.toByte(), speed.toByte(), 0xAA.toByte())
@@ -451,6 +484,83 @@ class MainActivity : AppCompatActivity() {
         } else {
             Toast.makeText(this, "Efecto no disponible para este protocolo", Toast.LENGTH_SHORT).show()
         }
+    }
+    
+    // --- Modo Música ---
+    
+    private fun toggleMusicMode() {
+        if (!isMusicModeActive) {
+            // Solicitar permiso de audio
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                startVisualizer()
+            } else {
+                requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            }
+        } else {
+            stopVisualizer()
+        }
+    }
+    
+    private fun startVisualizer() {
+        try {
+            visualizer = android.media.audiofx.Visualizer(0) // 0 para la mezcla de salida de audio global
+            visualizer?.captureSize = android.media.audiofx.Visualizer.getCaptureSizeRange()[1]
+
+            val listener = object : OnDataCaptureListener {
+                override fun onWaveFormDataCapture(visualizer: android.media.audiofx.Visualizer, waveform: ByteArray, samplingRate: Int) {
+                    // No usamos waveform para este ejemplo
+                }
+
+                override fun onFftDataCapture(visualizer: android.media.audiofx.Visualizer, fft: ByteArray, samplingRate: Int) {
+                    // FFT (Fast Fourier Transform) nos da las frecuencias del audio
+                    // Convertimos las frecuencias a un color
+                    val color = fftToColor(fft)
+                    sendColor(color)
+                    
+                    // Actualizar UI para mostrar el color que se está enviando
+                    runOnUiThread {
+                        viewSelectedColor.setBackgroundColor(color)
+                    }
+                }
+            }
+
+            val rate = android.media.audiofx.Visualizer.getMaxCaptureRate() / 2 // Capturar a una velocidad razonable
+            if (visualizer?.setDataCaptureListener(listener, rate, false, true) == SUCCESS) {
+                visualizer?.enabled = true
+                isMusicModeActive = true
+                btnMusicMode.text = "Detener Música"
+                Toast.makeText(this, "Modo Música Activado", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error al iniciar Visualizer", e)
+            Toast.makeText(this, "No se pudo iniciar el modo música", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun stopVisualizer() {
+        visualizer?.enabled = false
+        visualizer?.release()
+        visualizer = null
+        isMusicModeActive = false
+        btnMusicMode.text = "Modo Música"
+        Toast.makeText(this, "Modo Música Desactivado", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun fftToColor(fft: ByteArray): Int {
+        if (fft.isEmpty()) return Color.BLACK
+        
+        // Dividimos el FFT en 3 partes: Graves, Medios, Agudos
+        val n = fft.size
+        val bass = fft.slice(0 until n / 3).map { it.toInt().and(0xFF) }.average()
+        val mid = fft.slice(n/3 until 2*n/3).map { it.toInt().and(0xFF) }.average()
+        val treble = fft.slice(2*n/3 until n).map { it.toInt().and(0xFF) }.average()
+
+        // Normalizar los valores (0-255)
+        val r = (bass * 2).coerceIn(0.0, 255.0).toInt()
+        val g = (mid * 2).coerceIn(0.0, 255.0).toInt()
+        val b = (treble * 2).coerceIn(0.0, 255.0).toInt()
+
+        return Color.rgb(r, g, b)
     }
     
     // --- Protocolos Específicos ---
@@ -466,10 +576,8 @@ class MainActivity : AppCompatActivity() {
             sendBleBytes(message.toByteArray())
         } else if (bluetoothService?.getState() == BluetoothService.STATE_CONNECTED) {
             bluetoothService?.write(message.toByteArray())
-        } else {
-            Toast.makeText(this, "No conectado", Toast.LENGTH_SHORT).show()
         }
-    }
+    } 
     
     @SuppressLint("MissingPermission")
     private fun sendBytes(bytes: ByteArray) {
@@ -543,14 +651,24 @@ class MainActivity : AppCompatActivity() {
         bluetoothAdapter.startDiscovery()
     }
 
-    // Gestión de permisos
-    private val requestPermissionLauncher =
+    // --- Gestión de Permisos ---
+
+    private val requestAudioPermissionLauncher = 
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
+            if (isGranted) {
+                startVisualizer()
+            } else {
+                Toast.makeText(this, "Permiso de audio denegado", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+    private val requestBluetoothPermissionLauncher = 
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
             val allGranted = permissions.entries.all { it.value }
             if (allGranted) {
                 startScanning()
             } else {
-                Toast.makeText(this, "Permisos denegados. No se puede escanear.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Permisos de Bluetooth denegados", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -570,7 +688,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         return if (missingPermissions.isNotEmpty()) {
-            requestPermissionLauncher.launch(missingPermissions.toTypedArray())
+            requestBluetoothPermissionLauncher.launch(missingPermissions.toTypedArray())
             false
         } else {
             true
