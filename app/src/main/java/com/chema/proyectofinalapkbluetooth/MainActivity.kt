@@ -15,8 +15,9 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.media.audiofx.Visualizer.OnDataCaptureListener
-import android.media.audiofx.Visualizer.SUCCESS
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -37,6 +38,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import kotlin.math.abs
+import kotlin.math.log10
 
 class MainActivity : AppCompatActivity() {
 
@@ -80,9 +83,12 @@ class MainActivity : AppCompatActivity() {
 
     private var connectedDeviceName: String? = null
     
-    // Visualizador de Audio
-    private var visualizer: android.media.audiofx.Visualizer? = null
+    // AudioRecord (Micrófono) para modo música universal
+    private var audioRecord: AudioRecord? = null
     private var isMusicModeActive = false
+    private var audioThread: Thread? = null
+    private val SAMPLE_RATE = 44100
+    private var bufferSize = 0
 
     companion object {
         private const val TAG = "MainActivity"
@@ -332,7 +338,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
         super.onPause()
-        stopVisualizer()
+        stopAudioAnalysis()
     }
 
     override fun onDestroy() {
@@ -353,7 +359,7 @@ class MainActivity : AppCompatActivity() {
             layoutControls.visibility = View.GONE
             btnScan.isEnabled = true
             btnDisconnect.isEnabled = false
-            stopVisualizer() // Detener visualizador si nos desconectamos
+            stopAudioAnalysis() // Detener análisis si nos desconectamos
         }
     }
     
@@ -510,72 +516,128 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
-    // --- Modo Música ---
+    // --- Modo Música (Micrófono) ---
     
     private fun toggleMusicMode() {
         if (!isMusicModeActive) {
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                startVisualizer()
+                startAudioAnalysis()
             } else {
                 requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
             }
         } else {
-            stopVisualizer()
+            stopAudioAnalysis()
         }
     }
     
-    private fun startVisualizer() {
+    @SuppressLint("MissingPermission")
+    private fun startAudioAnalysis() {
+        if (isMusicModeActive) return
+
         try {
-            visualizer = android.media.audiofx.Visualizer(0)
-            visualizer?.captureSize = android.media.audiofx.Visualizer.getCaptureSizeRange()[1]
+            bufferSize = AudioRecord.getMinBufferSize(
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
 
-            val listener = object : OnDataCaptureListener {
-                override fun onWaveFormDataCapture(visualizer: android.media.audiofx.Visualizer, waveform: ByteArray, samplingRate: Int) { }
+            audioRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                SAMPLE_RATE,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize
+            )
 
-                override fun onFftDataCapture(visualizer: android.media.audiofx.Visualizer, fft: ByteArray, samplingRate: Int) {
-                    val color = fftToColor(fft)
-                    sendColor(color)
-                    runOnUiThread {
-                        viewSelectedColor.setBackgroundColor(color)
+            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                Toast.makeText(this, "Error: No se pudo iniciar el micrófono", Toast.LENGTH_SHORT).show()
+                return
+            }
+
+            audioRecord?.startRecording()
+            isMusicModeActive = true
+            btnMusicMode.text = "Detener Música"
+            Toast.makeText(this, "Modo Música (Micrófono) Activado", Toast.LENGTH_SHORT).show()
+
+            // Iniciar hilo de procesamiento
+            audioThread = Thread {
+                val buffer = ShortArray(bufferSize)
+                while (isMusicModeActive) {
+                    val readResult = audioRecord?.read(buffer, 0, bufferSize) ?: 0
+                    if (readResult > 0) {
+                        processAudioBuffer(buffer, readResult)
                     }
                 }
             }
+            audioThread?.start()
 
-            val rate = android.media.audiofx.Visualizer.getMaxCaptureRate() / 2
-            if (visualizer?.setDataCaptureListener(listener, rate, false, true) == SUCCESS) {
-                visualizer?.enabled = true
-                isMusicModeActive = true
-                btnMusicMode.text = "Detener Música"
-                Toast.makeText(this, "Modo Música Activado", Toast.LENGTH_SHORT).show()
-            }
         } catch (e: Exception) {
-            Log.e(TAG, "Error al iniciar Visualizer", e)
-            Toast.makeText(this, "No se pudo iniciar el modo música", Toast.LENGTH_SHORT).show()
+            Log.e(TAG, "Error al iniciar AudioRecord", e)
+            Toast.makeText(this, "Error al acceder al micrófono", Toast.LENGTH_SHORT).show()
         }
     }
 
-    private fun stopVisualizer() {
-        visualizer?.enabled = false
-        visualizer?.release()
-        visualizer = null
+    private fun stopAudioAnalysis() {
         isMusicModeActive = false
+        try {
+            audioThread?.join(500) // Esperar a que termine el hilo
+        } catch (e: InterruptedException) {
+            e.printStackTrace()
+        }
+        
+        if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
+            try {
+                audioRecord?.stop()
+                audioRecord?.release()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error al detener AudioRecord", e)
+            }
+        }
+        audioRecord = null
+        
         btnMusicMode.text = "Modo Música"
         Toast.makeText(this, "Modo Música Desactivado", Toast.LENGTH_SHORT).show()
     }
 
-    private fun fftToColor(fft: ByteArray): Int {
-        if (fft.isEmpty()) return Color.BLACK
+    private fun processAudioBuffer(buffer: ShortArray, readSize: Int) {
+        val currentTime = System.currentTimeMillis()
+        if (currentTime - lastSendTime < SEND_INTERVAL_MS) return
+
+        // Calcular volumen (RMS)
+        var sum = 0.0
+        for (i in 0 until readSize) {
+            sum += buffer[i] * buffer[i]
+        }
+        val rms = kotlin.math.sqrt(sum / readSize)
+        val volume = (20 * log10(rms)).toInt() // Decibelios aproximados
+
+        // Umbral de silencio (ajustar según necesidad)
+        if (volume < 30) return 
+
+        // Generar color basado en el volumen para simular ritmo
+        // Volumen bajo -> Colores fríos (Azul/Verde)
+        // Volumen alto -> Colores cálidos (Rojo/Amarillo)
+        val color = volumeToColor(volume)
         
-        val n = fft.size
-        val bass = fft.slice(0 until n / 3).map { it.toInt().and(0xFF) }.average()
-        val mid = fft.slice(n/3 until 2*n/3).map { it.toInt().and(0xFF) }.average()
-        val treble = fft.slice(2*n/3 until n).map { it.toInt().and(0xFF) }.average()
+        sendColor(color)
+        lastSendTime = currentTime
+        
+        runOnUiThread {
+            viewSelectedColor.setBackgroundColor(color)
+        }
+    }
 
-        val r = (bass * 2).coerceIn(0.0, 255.0).toInt()
-        val g = (mid * 2).coerceIn(0.0, 255.0).toInt()
-        val b = (treble * 2).coerceIn(0.0, 255.0).toInt()
-
-        return Color.rgb(r, g, b)
+    private fun volumeToColor(volume: Int): Int {
+        // Mapear volumen (aprox 30-90dB) a un espectro de color
+        // < 50: Azul
+        // 50-70: Verde/Amarillo
+        // > 70: Rojo/Magenta
+        
+        return when {
+            volume < 50 -> Color.rgb(0, (volume * 5).coerceIn(0, 255), 255) // Azul predominante
+            volume < 70 -> Color.rgb((volume * 3).coerceIn(0, 255), 255, 0) // Verde/Amarillo
+            else -> Color.rgb(255, 0, (volume * 2).coerceIn(0, 255)) // Rojo/Magenta
+        }
     }
     
     // --- Protocolos Específicos ---
@@ -674,7 +736,7 @@ class MainActivity : AppCompatActivity() {
     private val requestAudioPermissionLauncher = 
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
             if (isGranted) {
-                startVisualizer()
+                startAudioAnalysis()
             } else {
                 Toast.makeText(this, "Permiso de audio denegado", Toast.LENGTH_SHORT).show()
             }
