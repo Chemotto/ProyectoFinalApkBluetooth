@@ -111,7 +111,7 @@
                 android:layout_height="300dp"
                 android:clickable="true"
                 android:focusable="true"
-                android:layout_marginBottom="24dp"/>
+                android:layout_marginBottom="16dp"/>
 
             <!-- Indicador de color seleccionado -->
             <View
@@ -119,7 +119,23 @@
                 android:layout_width="50dp"
                 android:layout_height="50dp"
                 android:background="#FFFFFF"
-                android:layout_marginBottom="24dp"/>
+                android:layout_marginBottom="16dp"/>
+
+            <!-- Control de Brillo -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Brillo"
+                android:textStyle="bold"/>
+            
+            <SeekBar
+                android:id="@+id/sbBrightness"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:max="100"
+                android:progress="100"
+                android:layout_marginBottom="24dp"
+                android:paddingHorizontal="16dp"/>
 
             <!-- Botones ON/OFF -->
             <LinearLayout
@@ -149,7 +165,7 @@
                 android:id="@+id/etCommand"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:hint="Comando Hex Manual (ej: 71230FA3)" 
+                android:hint="Comando Hex Manual (ej: 56FF000000F0AA)" 
                 android:gravity="center"
                 android:layout_marginBottom="8dp"/>
 

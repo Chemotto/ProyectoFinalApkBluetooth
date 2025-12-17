@@ -90,7 +90,6 @@ class MainActivity : AppCompatActivity() {
                             tvStatus.text = "Estado: Conectando..."
                         }
                         BluetoothService.STATE_NONE -> {
-                            // Solo mostramos "Inactivo" si no estamos conectados NI intentando conectar por BLE
                             if (!isBleConnected && !isBleConnecting) {
                                 tvStatus.text = "Estado: Inactivo"
                                 showControls(false)
@@ -120,8 +119,6 @@ class MainActivity : AppCompatActivity() {
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            Log.d(TAG, "onConnectionStateChange: status=$status newState=$newState")
-            
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     isBleConnecting = false
@@ -130,7 +127,6 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         tvStatus.text = "Conectado. Buscando servicios..."
                     }
-                    // Retraso pequeño antes de descubrir servicios ayuda a veces
                     Handler(Looper.getMainLooper()).postDelayed({
                         gatt.discoverServices()
                     }, 300)
@@ -145,7 +141,6 @@ class MainActivity : AppCompatActivity() {
                     gatt.close()
                 }
             } else {
-                // Error en la conexión (ej: 133)
                 Log.e(TAG, "Error BLE: $status")
                 isBleConnecting = false
                 isBleConnected = false
@@ -335,7 +330,6 @@ class MainActivity : AppCompatActivity() {
     private fun logMessage(msg: String) {
         stringBuffer.append(msg + "\n")
         tvLog.text = stringBuffer.toString()
-        // El scroll solo funcionará si la vista es visible, pero no causa error
         layoutControls.post {
             layoutControls.fullScroll(View.FOCUS_DOWN)
         }
@@ -345,7 +339,6 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
-        // Aseguramos detener el escaneo
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
              if (bluetoothAdapter.isDiscovering) {
                  bluetoothAdapter.cancelDiscovery()
@@ -355,10 +348,7 @@ class MainActivity : AppCompatActivity() {
         val type = device.type
         Log.d(TAG, "Conectando a dispositivo: ${device.name}, Tipo: $type")
         
-        // Retardo para estabilizar el hardware BT (Crucial para evitar errores 133)
         Handler(Looper.getMainLooper()).postDelayed({
-            // LÓGICA ROBUSTA MEJORADA:
-            // Si no es Clásico, asumimos BLE (cubre Dual, LE y Unknown)
             if (type != BluetoothDevice.DEVICE_TYPE_CLASSIC) {
                  Log.d(TAG, "Intentando conexión BLE (Por defecto)")
                  isBleConnecting = true
@@ -370,16 +360,13 @@ class MainActivity : AppCompatActivity() {
                  disconnectBle()
                  bluetoothService?.connect(device)
             }
-        }, 600) // 600ms de pausa
+        }, 600)
     }
     
     @SuppressLint("MissingPermission")
     private fun connectBle(device: BluetoothDevice) {
         disconnectBle()
         tvStatus.text = "Conectando (BLE)..."
-        
-        // Simplificado: Usar connectGatt estándar (TRANSPORT_AUTO) para mayor compatibilidad
-        // Esto permite que Android decida si usar LE o Classic según la publicidad del dispositivo
         bluetoothGatt = device.connectGatt(this, false, gattCallback)
     }
     
@@ -409,7 +396,7 @@ class MainActivity : AppCompatActivity() {
         val command = when(rgProtocol.checkedRadioButtonId) {
             R.id.rbMagic -> createMagicHomeCommand(r, g, b)
             R.id.rbGeneric -> byteArrayOf(r.toByte(), g.toByte(), b.toByte())
-            else -> "$r,$g,$b" // Formato Texto
+            else -> "$r,$g,$b" 
         }
         
         if (command is ByteArray) {
@@ -421,8 +408,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun sendPowerCommand(on: Boolean) {
         val command = when(rgProtocol.checkedRadioButtonId) {
-            R.id.rbMagic -> if (on) byteArrayOf(0x71, 0x23, 0x0F, 0xA3.toByte()) 
-                                else byteArrayOf(0x71, 0x24, 0x0F, 0xA4.toByte())
+            // Protocolo Magic Home Clásico (Compatible con muchas tiras Bluetooth/WiFi)
+            R.id.rbMagic -> if (on) byteArrayOf(0x7e, 0x04, 0x04, 0xf0.toByte(), 0x00, 0x01, 0xff.toByte(), 0x00, 0xef.toByte()) 
+                                else byteArrayOf(0x7e, 0x04, 0x04, 0x00, 0x00, 0x00, 0xff.toByte(), 0x00, 0xef.toByte())
             R.id.rbGeneric -> if (on) byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) 
                                 else byteArrayOf(0x00, 0x00, 0x00)
             else -> if (on) "ON" else "OFF"
@@ -438,10 +426,8 @@ class MainActivity : AppCompatActivity() {
     // --- Protocolos Específicos ---
     
     private fun createMagicHomeCommand(r: Int, g: Int, b: Int): ByteArray {
-        // Formato BLE Magic Home: 31 RR GG BB 00 00 0F [Checksum]
-        val sum = 0x31 + r + g + b + 0x00 + 0x00 + 0x0F
-        val checksum = (sum and 0xFF).toByte()
-        return byteArrayOf(0x31, r.toByte(), g.toByte(), b.toByte(), 0x00, 0x00, 0x0F, checksum)
+        // Formato Magic Home Clásico: 56 RR GG BB 00 F0 AA
+        return byteArrayOf(0x56.toByte(), r.toByte(), g.toByte(), b.toByte(), 0x00, 0xf0.toByte(), 0xaa.toByte())
     }
 
     @SuppressLint("MissingPermission")

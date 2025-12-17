@@ -21,16 +21,33 @@ class ColorWheelView @JvmOverloads constructor(
 ) : View(context, attrs, defStyleAttr) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val selectorBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val selectorWhitePaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    
     private var centerX = 0f
     private var centerY = 0f
     private var radius = 0f
     private var selectedColor = Color.WHITE
+    
+    // Posición del selector
+    private var selectorX = 0f
+    private var selectorY = 0f
     
     // Listener para notificar el cambio de color
     var onColorChangedListener: ((Int) -> Unit)? = null
 
     init {
         paint.style = Paint.Style.FILL
+        
+        // Borde negro exterior
+        selectorBorderPaint.style = Paint.Style.STROKE
+        selectorBorderPaint.color = Color.BLACK
+        selectorBorderPaint.strokeWidth = 3f
+        
+        // Borde blanco interior (para contraste)
+        selectorWhitePaint.style = Paint.Style.STROKE
+        selectorWhitePaint.color = Color.WHITE
+        selectorWhitePaint.strokeWidth = 8f
     }
 
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
@@ -38,58 +55,86 @@ class ColorWheelView @JvmOverloads constructor(
         centerX = w / 2f
         centerY = h / 2f
         radius = min(centerX, centerY) * 0.9f
+        
+        // Inicializar el selector en el centro
+        selectorX = centerX
+        selectorY = centerY
+        
         updateShader()
     }
 
     private fun updateShader() {
         if (radius <= 0) return
         
-        // Gradiente de barrido para los colores (Hue)
+        // CORRECCIÓN IMPORTANTE: Orden de colores alineado con cálculo HSV (Rojo -> Amarillo -> Verde...)
+        // Esto asegura que el color visual coincida con el color seleccionado
         val colors = intArrayOf(
-            Color.RED, Color.MAGENTA, Color.BLUE, Color.CYAN,
-            Color.GREEN, Color.YELLOW, Color.RED
+            Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN,
+            Color.BLUE, Color.MAGENTA, Color.RED
         )
         val sweepShader = SweepGradient(centerX, centerY, colors, null)
 
-        // Gradiente radial para la saturación (blanco al centro)
         val radialShader = RadialGradient(
             centerX, centerY, radius,
             Color.WHITE, 0x00FFFFFF, Shader.TileMode.CLAMP
         )
 
-        // Combinar ambos
         paint.shader = ComposeShader(sweepShader, radialShader, PorterDuff.Mode.SRC_OVER)
     }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         canvas.drawCircle(centerX, centerY, radius, paint)
+        
+        // Dibujar el selector mejorado
+        val indicatorRadius = 25f 
+        
+        val fillSelectorPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+        fillSelectorPaint.style = Paint.Style.FILL
+        fillSelectorPaint.color = selectedColor
+        
+        // 1. Círculo relleno de color
+        canvas.drawCircle(selectorX, selectorY, indicatorRadius, fillSelectorPaint)
+        // 2. Anillo blanco grueso
+        canvas.drawCircle(selectorX, selectorY, indicatorRadius, selectorWhitePaint)
+        // 3. Anillo negro fino exterior
+        canvas.drawCircle(selectorX, selectorY, indicatorRadius + 2f, selectorBorderPaint)
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // Manejamos ACTION_DOWN y ACTION_MOVE para permitir arrastrar y seleccionar
+        parent.requestDisallowInterceptTouchEvent(true) // Evitar que el ScrollView intercepte
         when (event.action) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                val x = event.x - centerX
-                val y = event.y - centerY
-                val dist = sqrt(x * x + y * y)
-
-                // Permitimos tocar un poco fuera del radio visible (hasta 1.1x) para facilitar la selección de bordes
-                if (dist <= radius * 1.1f) {
-                    selectedColor = getColorAt(event.x, event.y)
-                    onColorChangedListener?.invoke(selectedColor)
-                    
-                    // Solo llamamos performClick en UP para cumplir con accesibilidad, 
-                    // pero actualizamos color en movimiento fluido
-                    return true 
-                }
+                updateSelector(event.x, event.y)
+                return true
             }
             MotionEvent.ACTION_UP -> {
+                updateSelector(event.x, event.y)
                 performClick()
+                parent.requestDisallowInterceptTouchEvent(false)
                 return true
             }
         }
         return super.onTouchEvent(event)
+    }
+    
+    private fun updateSelector(x: Float, y: Float) {
+        val dx = x - centerX
+        val dy = y - centerY
+        val dist = sqrt(dx * dx + dy * dy)
+        
+        if (dist <= radius) {
+            selectorX = x
+            selectorY = y
+        } else {
+            val ratio = radius / dist
+            selectorX = centerX + dx * ratio
+            selectorY = centerY + dy * ratio
+        }
+        
+        selectedColor = getColorAt(selectorX, selectorY)
+        onColorChangedListener?.invoke(selectedColor)
+        invalidate()
     }
     
     override fun performClick(): Boolean {
@@ -101,14 +146,9 @@ class ColorWheelView @JvmOverloads constructor(
         val dy = y - centerY
         val dist = sqrt(dx * dx + dy * dy)
         
-        // Saturación: Distancia desde el centro (0 al centro, 1 en el borde)
-        // Limitamos a 1f para que no se sature de más si tocamos un poco fuera
         val saturation = (dist / radius).coerceIn(0f, 1f)
-        
-        // Brillo (Value): Siempre al máximo para colores vivos
         val value = 1f
         
-        // Tono (Hue): Ángulo
         var angle = Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
         if (angle < 0) angle += 360f
         
