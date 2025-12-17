@@ -131,11 +131,11 @@
                 android:layout_marginBottom="24dp"
                 android:paddingHorizontal="16dp"/>
 
-            <!-- Botones de Efectos -->
+            <!-- Botones de Efectos y Power -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Efectos"
+                android:text="Modos"
                 android:textStyle="bold"/>
             
             <LinearLayout
@@ -148,6 +148,7 @@
 
                 <Button
                     android:id="@+id/btnFlash"
+                    style="@style/Widget.AppCompat.Button.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Flash"
@@ -155,6 +156,7 @@
 
                 <Button
                     android:id="@+id/btnStrobe"
+                    style="@style/Widget.AppCompat.Button.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Strobe"
@@ -162,39 +164,33 @@
 
                 <Button
                     android:id="@+id/btnFade"
+                    style="@style/Widget.AppCompat.Button.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Fade"/>
             </LinearLayout>
 
-             <!-- Botón Modo Música -->
-            <Button
-                android:id="@+id/btnMusicMode"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Modo Música"
-                android:layout_marginBottom="24dp"/>
-
-            <!-- Botones ON/OFF -->
+             <!-- Botón Modo Música y Power -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center">
-
+                android:gravity="center"
+                android:layout_marginBottom="24dp">
+                
                 <Button
-                    android:id="@+id/btnOn"
+                    android:id="@+id/btnMusicMode"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="ON"
-                    android:layout_marginEnd="8dp"/>
-
+                    android:text="Música"
+                    android:layout_marginEnd="16dp"/>
+                
                 <Button
-                    android:id="@+id/btnOff"
+                    android:id="@+id/btnPower"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="OFF"
-                    android:backgroundTint="#757575"/>
+                    android:text="Power"
+                    android:backgroundTint="#E53935"/>
             </LinearLayout>
 
         </LinearLayout>

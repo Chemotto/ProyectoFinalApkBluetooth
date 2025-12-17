@@ -17,8 +17,6 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.audiofx.Visualizer.OnDataCaptureListener
 import android.media.audiofx.Visualizer.SUCCESS
-import android.media.audiofx.Visualizer.STATE_ENABLED
-import android.media.audiofx.Visualizer.STATE_INITIALIZED
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -27,7 +25,6 @@ import android.os.Message
 import android.util.Log
 import android.view.View
 import android.widget.Button
-import android.widget.EditText
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -40,7 +37,6 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import java.util.UUID
 
 class MainActivity : AppCompatActivity() {
 
@@ -56,15 +52,15 @@ class MainActivity : AppCompatActivity() {
     private lateinit var viewSelectedColor: View
     private lateinit var sbBrightness: SeekBar
     private lateinit var rgProtocol: RadioGroup
-    private lateinit var btnOn: Button
-    private lateinit var btnOff: Button
+    private lateinit var btnPower: Button
     private lateinit var btnFlash: Button
     private lateinit var btnStrobe: Button
     private lateinit var btnFade: Button
     private lateinit var btnMusicMode: Button
     
-    // Estado del color
+    // Estado del color y encendido
     private var lastSelectedColor: Int = Color.WHITE
+    private var isLightOn = true
     
     private lateinit var deviceAdapter: BluetoothDeviceAdapter
     private val deviceList = ArrayList<BluetoothDevice>()
@@ -138,7 +134,6 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         tvStatus.text = "Conectado. Buscando servicios..."
                     }
-                    // Retraso pequeño antes de descubrir servicios ayuda a veces
                     Handler(Looper.getMainLooper()).postDelayed({
                         gatt.discoverServices()
                     }, 300)
@@ -153,7 +148,6 @@ class MainActivity : AppCompatActivity() {
                     gatt.close()
                 }
             } else {
-                // ERROR DE CONEXIÓN BLE: Proporcionar feedback más útil
                 Log.e(TAG, "Error BLE: $status")
                 isBleConnecting = false
                 isBleConnected = false
@@ -208,7 +202,7 @@ class MainActivity : AppCompatActivity() {
                         Log.d(TAG, "Encontrado: ${it.name} [${it.address}] Tipo: $typeStr")
                         if (deviceList.none { d -> d.address == it.address }) {
                             deviceList.add(it)
-                            deviceAdapter.notifyItemInserted(deviceList.size - 1);
+                            deviceAdapter.notifyItemInserted(deviceList.size - 1)
                         }
                     }
                 }
@@ -243,8 +237,7 @@ class MainActivity : AppCompatActivity() {
         viewSelectedColor = findViewById(R.id.viewSelectedColor)
         sbBrightness = findViewById(R.id.sbBrightness)
         rgProtocol = findViewById(R.id.rgProtocol)
-        btnOn = findViewById(R.id.btnOn)
-        btnOff = findViewById(R.id.btnOff)
+        btnPower = findViewById(R.id.btnPower)
         btnFlash = findViewById(R.id.btnFlash)
         btnStrobe = findViewById(R.id.btnStrobe)
         btnFade = findViewById(R.id.btnFade)
@@ -294,12 +287,14 @@ class MainActivity : AppCompatActivity() {
             }
         })
         
-        btnOn.setOnClickListener { sendPowerCommand(true) }
-        btnOff.setOnClickListener { sendPowerCommand(false) }
+        btnPower.setOnClickListener { 
+            isLightOn = !isLightOn
+            sendPowerCommand(isLightOn) 
+        }
         
-        btnFlash.setOnClickListener { sendEffectCommand(0x25) } // Ejemplo de código para Flash
-        btnStrobe.setOnClickListener { sendEffectCommand(0x26) } // Ejemplo de código para Strobe
-        btnFade.setOnClickListener { sendEffectCommand(0x27) } // Ejemplo de código para Fade (transición suave)
+        btnFlash.setOnClickListener { sendEffectCommand(0x25) }
+        btnStrobe.setOnClickListener { sendEffectCommand(0x26) }
+        btnFade.setOnClickListener { sendEffectCommand(0x27) }
         
         btnMusicMode.setOnClickListener { toggleMusicMode() }
 
@@ -390,29 +385,25 @@ class MainActivity : AppCompatActivity() {
         val type = device.type
         Log.d(TAG, "Conectando a dispositivo: ${device.name}, Tipo: $type")
         
-        // Retardo para estabilizar el hardware BT (Crucial para evitar errores 133)
         Handler(Looper.getMainLooper()).postDelayed({
-            // Preferimos BLE para casi todo, a menos que sea explícitamente Classic.
-            // Esto cubre dispositivos LE, DUAL y UNKNOWN que suelen ser BLE.
             if (type != BluetoothDevice.DEVICE_TYPE_CLASSIC) {
                  Log.d(TAG, "Intentando conexión BLE (Por defecto)")
                  isBleConnecting = true
-                 bluetoothService?.stop() // Asegurar que el servicio clásico esté detenido
+                 bluetoothService?.stop()
                  connectBle(device)
             } else {
                  Log.d(TAG, "Intentando conexión Clásica (Tipo CLASSIC)")
                  isBleConnecting = false
-                 disconnectBle() // Asegurar que BLE esté desconectado
+                 disconnectBle()
                  bluetoothService?.connect(device)
             }
-        }, 600) // 600ms de pausa
+        }, 600)
     }
     
     @SuppressLint("MissingPermission")
     private fun connectBle(device: BluetoothDevice) {
         disconnectBle()
         tvStatus.text = "Conectando (BLE)..."
-        // Usar TRANSPORT_LE para forzar la conexión BLE, mejor para dispositivos Dual/LE
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } else {
@@ -458,8 +449,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun sendPowerCommand(on: Boolean) {
         val command = when(rgProtocol.checkedRadioButtonId) {
-            R.id.rbMagic -> if (on) byteArrayOf(0x7e, 0x04, 0x04, 0xf0.toByte(), 0x00, 0x01, 0xff.toByte(), 0x00, 0xef.toByte()) 
-                                else byteArrayOf(0x7e, 0x04, 0x04, 0x00, 0x00, 0x00, 0xff.toByte(), 0x00, 0xef.toByte())
+            // Códigos BLE para Magic Home (0x71...)
+            R.id.rbMagic -> if (on) byteArrayOf(0x71, 0x23, 0x0F, 0xA3.toByte()) 
+                                else byteArrayOf(0x71, 0x24, 0x0F, 0xA4.toByte())
             R.id.rbGeneric -> if (on) byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) 
                                 else byteArrayOf(0x00, 0x00, 0x00)
             else -> if (on) "ON" else "OFF"
@@ -475,8 +467,10 @@ class MainActivity : AppCompatActivity() {
     private fun sendEffectCommand(effectCode: Int) {
         val speed = 0x10 // Velocidad media por defecto
         val command = when(rgProtocol.checkedRadioButtonId) {
-            R.id.rbMagic -> byteArrayOf(0x56, effectCode.toByte(), speed.toByte(), 0xAA.toByte())
-            else -> null // Los efectos son específicos de Magic Home
+            // Los códigos de efecto de Magic Home Clásico y BLE son diferentes.
+            // Este es el formato BLE: 81 [código] [velocidad] 99
+            R.id.rbMagic -> byteArrayOf(0x81.toByte(), effectCode.toByte(), speed.toByte(), 0x99.toByte())
+            else -> null
         }
         
         if (command != null) {
@@ -490,7 +484,6 @@ class MainActivity : AppCompatActivity() {
     
     private fun toggleMusicMode() {
         if (!isMusicModeActive) {
-            // Solicitar permiso de audio
             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                 startVisualizer()
             } else {
@@ -503,28 +496,22 @@ class MainActivity : AppCompatActivity() {
     
     private fun startVisualizer() {
         try {
-            visualizer = android.media.audiofx.Visualizer(0) // 0 para la mezcla de salida de audio global
+            visualizer = android.media.audiofx.Visualizer(0)
             visualizer?.captureSize = android.media.audiofx.Visualizer.getCaptureSizeRange()[1]
 
             val listener = object : OnDataCaptureListener {
-                override fun onWaveFormDataCapture(visualizer: android.media.audiofx.Visualizer, waveform: ByteArray, samplingRate: Int) {
-                    // No usamos waveform para este ejemplo
-                }
+                override fun onWaveFormDataCapture(visualizer: android.media.audiofx.Visualizer, waveform: ByteArray, samplingRate: Int) { }
 
                 override fun onFftDataCapture(visualizer: android.media.audiofx.Visualizer, fft: ByteArray, samplingRate: Int) {
-                    // FFT (Fast Fourier Transform) nos da las frecuencias del audio
-                    // Convertimos las frecuencias a un color
                     val color = fftToColor(fft)
                     sendColor(color)
-                    
-                    // Actualizar UI para mostrar el color que se está enviando
                     runOnUiThread {
                         viewSelectedColor.setBackgroundColor(color)
                     }
                 }
             }
 
-            val rate = android.media.audiofx.Visualizer.getMaxCaptureRate() / 2 // Capturar a una velocidad razonable
+            val rate = android.media.audiofx.Visualizer.getMaxCaptureRate() / 2
             if (visualizer?.setDataCaptureListener(listener, rate, false, true) == SUCCESS) {
                 visualizer?.enabled = true
                 isMusicModeActive = true
@@ -549,13 +536,11 @@ class MainActivity : AppCompatActivity() {
     private fun fftToColor(fft: ByteArray): Int {
         if (fft.isEmpty()) return Color.BLACK
         
-        // Dividimos el FFT en 3 partes: Graves, Medios, Agudos
         val n = fft.size
         val bass = fft.slice(0 until n / 3).map { it.toInt().and(0xFF) }.average()
         val mid = fft.slice(n/3 until 2*n/3).map { it.toInt().and(0xFF) }.average()
         val treble = fft.slice(2*n/3 until n).map { it.toInt().and(0xFF) }.average()
 
-        // Normalizar los valores (0-255)
         val r = (bass * 2).coerceIn(0.0, 255.0).toInt()
         val g = (mid * 2).coerceIn(0.0, 255.0).toInt()
         val b = (treble * 2).coerceIn(0.0, 255.0).toInt()
@@ -566,8 +551,10 @@ class MainActivity : AppCompatActivity() {
     // --- Protocolos Específicos ---
     
     private fun createMagicHomeColorCommand(r: Int, g: Int, b: Int): ByteArray {
-        // Formato Magic Home Clásico: 56 RR GG BB 00 F0 AA
-        return byteArrayOf(0x56.toByte(), r.toByte(), g.toByte(), b.toByte(), 0x00, 0xf0.toByte(), 0xaa.toByte())
+        // Formato BLE Magic Home: 31 RR GG BB 00 00 0F [Checksum]
+        val sum = 0x31 + r + g + b + 0x00 + 0x00 + 0x0F
+        val checksum = (sum and 0xFF).toByte()
+        return byteArrayOf(0x31, r.toByte(), g.toByte(), b.toByte(), 0x00, 0x00, 0x0F, checksum)
     }
 
     @SuppressLint("MissingPermission")
