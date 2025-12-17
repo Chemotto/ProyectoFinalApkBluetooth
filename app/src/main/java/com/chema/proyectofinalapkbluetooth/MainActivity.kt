@@ -26,6 +26,7 @@ import android.widget.Button
 import android.widget.EditText
 import android.widget.RadioGroup
 import android.widget.ScrollView
+import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
@@ -45,16 +46,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnDisconnect: Button
     private lateinit var rvDevices: RecyclerView
     private lateinit var layoutControls: ScrollView
-    private lateinit var tvLog: TextView
-    private lateinit var etCommand: EditText
-    private lateinit var btnSend: Button
     
     // Vistas de control
     private lateinit var colorWheel: ColorWheelView
     private lateinit var viewSelectedColor: View
+    private lateinit var sbBrightness: SeekBar
     private lateinit var rgProtocol: RadioGroup
     private lateinit var btnOn: Button
     private lateinit var btnOff: Button
+    private lateinit var btnFlash: Button
+    private lateinit var btnStrobe: Button
+    private lateinit var btnFade: Button
+    
+    // Estado del color
+    private var lastSelectedColor: Int = Color.WHITE
     
     private lateinit var deviceAdapter: BluetoothDeviceAdapter
     private val deviceList = ArrayList<BluetoothDevice>()
@@ -69,7 +74,6 @@ class MainActivity : AppCompatActivity() {
     private var isBleConnecting = false
 
     private var connectedDeviceName: String? = null
-    private val stringBuffer = StringBuilder()
 
     companion object {
         private const val TAG = "MainActivity"
@@ -97,11 +101,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                BluetoothService.MESSAGE_READ -> {
-                    val readBuf = msg.obj as ByteArray
-                    val readMessage = String(readBuf, 0, msg.arg1)
-                    logMessage("RX: $readMessage")
-                }
+                BluetoothService.MESSAGE_READ -> { }
                 BluetoothService.MESSAGE_DEVICE_NAME -> {
                     connectedDeviceName = msg.data.getString(BluetoothService.DEVICE_NAME)
                     Toast.makeText(applicationContext, "Conectado a $connectedDeviceName", Toast.LENGTH_SHORT).show()
@@ -159,10 +159,8 @@ class MainActivity : AppCompatActivity() {
                     if (bleWriteCharacteristic != null) {
                         tvStatus.text = "Conectado y listo (BLE)"
                         showControls(true)
-                        logMessage("Servicio de escritura encontrado: ${bleWriteCharacteristic?.uuid}")
                     } else {
                         tvStatus.text = "Conectado (Sin escritura)"
-                        logMessage("Error: No se encontró característica de escritura")
                     }
                 }
             } else {
@@ -171,11 +169,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS) {
-                 runOnUiThread { logMessage("TX (BLE): Datos enviados") }
-            } else {
-                 runOnUiThread { logMessage("Error al enviar BLE: $status") }
-            }
+            // Silencioso, no es necesario hacer nada aquí
         }
     }
 
@@ -227,15 +221,16 @@ class MainActivity : AppCompatActivity() {
         btnDisconnect = findViewById(R.id.btnDisconnect)
         rvDevices = findViewById(R.id.rvDevices)
         layoutControls = findViewById(R.id.layoutControls)
-        tvLog = findViewById(R.id.tvLog)
-        etCommand = findViewById(R.id.etCommand)
-        btnSend = findViewById(R.id.btnSend)
         
         colorWheel = findViewById(R.id.colorWheel)
         viewSelectedColor = findViewById(R.id.viewSelectedColor)
+        sbBrightness = findViewById(R.id.sbBrightness)
         rgProtocol = findViewById(R.id.rgProtocol)
         btnOn = findViewById(R.id.btnOn)
         btnOff = findViewById(R.id.btnOff)
+        btnFlash = findViewById(R.id.btnFlash)
+        btnStrobe = findViewById(R.id.btnStrobe)
+        btnFade = findViewById(R.id.btnFade)
 
         // Configurar RecyclerView
         deviceAdapter = BluetoothDeviceAdapter(deviceList) { device ->
@@ -263,25 +258,30 @@ class MainActivity : AppCompatActivity() {
         }
         
         colorWheel.onColorChangedListener = { color ->
-            viewSelectedColor.setBackgroundColor(color)
-            sendColor(color)
+            lastSelectedColor = color
+            updatePreviewAndSend()
         }
+        
+        sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser) {
+                    updatePreviewColorOnly()
+                }
+            }
+
+            override fun onStartTrackingTouch(seekBar: SeekBar?) { }
+
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {
+                updatePreviewAndSend()
+            }
+        })
         
         btnOn.setOnClickListener { sendPowerCommand(true) }
         btnOff.setOnClickListener { sendPowerCommand(false) }
-
-        btnSend.setOnClickListener {
-            val message = etCommand.text.toString()
-            if (message.isNotEmpty()) {
-                try {
-                    val bytes = hexStringToByteArray(message)
-                    sendBytes(bytes)
-                    etCommand.text.clear()
-                } catch (e: Exception) {
-                    Toast.makeText(this, "Hex inválido (usa formato FFFFFF)", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
+        
+        btnFlash.setOnClickListener { sendEffectCommand(0x25) } // Ejemplo de código para Flash
+        btnStrobe.setOnClickListener { sendEffectCommand(0x26) } // Ejemplo de código para Strobe
+        btnFade.setOnClickListener { sendEffectCommand(0x27) } // Ejemplo de código para Fade (transición suave)
 
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_FOUND)
@@ -317,8 +317,6 @@ class MainActivity : AppCompatActivity() {
             layoutControls.visibility = View.VISIBLE
             btnScan.isEnabled = false
             btnDisconnect.isEnabled = true
-            stringBuffer.clear() 
-            tvLog.text = ""
         } else {
             rvDevices.visibility = View.VISIBLE
             layoutControls.visibility = View.GONE
@@ -328,11 +326,29 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun logMessage(msg: String) {
-        stringBuffer.append(msg + "\n")
-        tvLog.text = stringBuffer.toString()
-        layoutControls.post {
-            layoutControls.fullScroll(View.FOCUS_DOWN)
-        }
+        // Silenciado
+    }
+    
+    // --- Lógica de Brillo y Color ---
+    
+    private fun updatePreviewColorOnly() {
+        val brightness = sbBrightness.progress / 100f
+        val colorWithBrightness = applyBrightness(lastSelectedColor, brightness)
+        viewSelectedColor.setBackgroundColor(colorWithBrightness)
+    }
+    
+    private fun updatePreviewAndSend() {
+        val brightness = sbBrightness.progress / 100f
+        val colorWithBrightness = applyBrightness(lastSelectedColor, brightness)
+        viewSelectedColor.setBackgroundColor(colorWithBrightness)
+        sendColor(colorWithBrightness)
+    }
+    
+    private fun applyBrightness(color: Int, factor: Float): Int {
+        val r = (Color.red(color) * factor).toInt()
+        val g = (Color.green(color) * factor).toInt()
+        val b = (Color.blue(color) * factor).toInt()
+        return Color.rgb(r, g, b)
     }
     
     // --- Lógica de Conexión Unificada ---
@@ -387,14 +403,14 @@ class MainActivity : AppCompatActivity() {
     }
     
     // --- Envío de Comandos BLE ---
-
+    
     private fun sendColor(color: Int) {
         val r = Color.red(color)
         val g = Color.green(color)
         val b = Color.blue(color)
 
         val command = when(rgProtocol.checkedRadioButtonId) {
-            R.id.rbMagic -> createMagicHomeCommand(r, g, b)
+            R.id.rbMagic -> createMagicHomeColorCommand(r, g, b)
             R.id.rbGeneric -> byteArrayOf(r.toByte(), g.toByte(), b.toByte())
             else -> "$r,$g,$b" 
         }
@@ -408,7 +424,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun sendPowerCommand(on: Boolean) {
         val command = when(rgProtocol.checkedRadioButtonId) {
-            // Protocolo Magic Home Clásico (Compatible con muchas tiras Bluetooth/WiFi)
             R.id.rbMagic -> if (on) byteArrayOf(0x7e, 0x04, 0x04, 0xf0.toByte(), 0x00, 0x01, 0xff.toByte(), 0x00, 0xef.toByte()) 
                                 else byteArrayOf(0x7e, 0x04, 0x04, 0x00, 0x00, 0x00, 0xff.toByte(), 0x00, 0xef.toByte())
             R.id.rbGeneric -> if (on) byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) 
@@ -423,9 +438,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
     
+    private fun sendEffectCommand(effectCode: Int) {
+        // La velocidad es un valor de 0x01 (más rápido) a 0x1F (más lento)
+        val speed = 0x10 // Velocidad media por defecto
+        val command = when(rgProtocol.checkedRadioButtonId) {
+            R.id.rbMagic -> byteArrayOf(0x56, effectCode.toByte(), speed.toByte(), 0xAA.toByte())
+            else -> null // Los efectos son específicos de Magic Home
+        }
+        
+        if (command != null) {
+            sendBytes(command)
+        } else {
+            Toast.makeText(this, "Efecto no disponible para este protocolo", Toast.LENGTH_SHORT).show()
+        }
+    }
+    
     // --- Protocolos Específicos ---
     
-    private fun createMagicHomeCommand(r: Int, g: Int, b: Int): ByteArray {
+    private fun createMagicHomeColorCommand(r: Int, g: Int, b: Int): ByteArray {
         // Formato Magic Home Clásico: 56 RR GG BB 00 F0 AA
         return byteArrayOf(0x56.toByte(), r.toByte(), g.toByte(), b.toByte(), 0x00, 0xf0.toByte(), 0xaa.toByte())
     }
@@ -434,10 +464,8 @@ class MainActivity : AppCompatActivity() {
     private fun sendMessage(message: String) {
         if (isBleConnected) {
             sendBleBytes(message.toByteArray())
-            logMessage("TX (Texto): $message")
         } else if (bluetoothService?.getState() == BluetoothService.STATE_CONNECTED) {
             bluetoothService?.write(message.toByteArray())
-            logMessage("TX (Texto): $message")
         } else {
             Toast.makeText(this, "No conectado", Toast.LENGTH_SHORT).show()
         }
@@ -447,10 +475,8 @@ class MainActivity : AppCompatActivity() {
     private fun sendBytes(bytes: ByteArray) {
         if (isBleConnected) {
             sendBleBytes(bytes)
-            logMessage("TX (Hex): ${bytesToHex(bytes)}")
         } else if (bluetoothService?.getState() == BluetoothService.STATE_CONNECTED) {
             bluetoothService?.write(bytes)
-            logMessage("TX (Hex): ${bytesToHex(bytes)}")
         } else {
             Toast.makeText(this, "No conectado", Toast.LENGTH_SHORT).show()
         }
@@ -468,9 +494,7 @@ class MainActivity : AppCompatActivity() {
                 BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             }
             bluetoothGatt?.writeCharacteristic(characteristic)
-        } else {
-            logMessage("Error: No se encontró característica de escritura")
-        }
+        } 
     }
     
     // --- Utilidades ---
@@ -484,14 +508,6 @@ class MainActivity : AppCompatActivity() {
             i += 2
         }
         return data
-    }
-    
-    private fun bytesToHex(bytes: ByteArray): String {
-        val sb = StringBuilder()
-        for (b in bytes) {
-            sb.append(String.format("%02X ", b))
-        }
-        return sb.toString()
     }
     
     private fun findWriteCharacteristic(gatt: BluetoothGatt): BluetoothGattCharacteristic? {
