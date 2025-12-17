@@ -8,61 +8,127 @@
     android:padding="16dp"
     tools:context=".MainActivity">
 
-    <!-- Panel Superior: Botones de Escaneo y Estado -->
-    <Button
-        android:id="@+id/btnScan"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:text="Escanear Dispositivos"
-        app:layout_constraintEnd_toStartOf="@+id/btnDisconnect"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toTopOf="parent"
-        android:layout_marginEnd="8dp"/>
-
-    <Button
-        android:id="@+id/btnDisconnect"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:text="Desconectar"
-        android:enabled="false"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toEndOf="@+id/btnScan"
-        app:layout_constraintTop_toTopOf="parent"
-        android:layout_marginStart="8dp"/>
-
-    <TextView
-        android:id="@+id/tvStatus"
+    <!-- CABECERA: Botón para abrir menú de conexión -->
+    <LinearLayout
+        android:id="@+id/headerLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Estado: Inactivo"
-        android:textAlignment="center"
-        android:layout_marginTop="16dp"
-        app:layout_constraintTop_toBottomOf="@+id/btnScan" />
+        android:orientation="horizontal"
+        android:gravity="end"
+        app:layout_constraintTop_toTopOf="parent">
 
-    <!-- VISTA 1: Lista de Dispositivos (Visible al inicio) -->
-    <androidx.recyclerview.widget.RecyclerView
-        android:id="@+id/rvDevices"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="16dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/tvStatus" />
+        <TextView
+            android:id="@+id/tvCurrentDevice"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Desconectado"
+            android:textStyle="bold"
+            android:textSize="14sp"
+            android:textColor="#555555"
+            android:gravity="center_vertical"/>
 
-    <!-- VISTA 2: Panel de Configuración/Controles (Oculto al inicio) -->
-    <ScrollView
-        android:id="@+id/layoutControls"
+        <ImageButton
+            android:id="@+id/btnToggleConnectionPanel"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:src="@android:drawable/ic_menu_search"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Buscar dispositivos" />
+    </LinearLayout>
+
+    <!-- PANEL DE CONEXIÓN (Oculto por defecto) -->
+    <androidx.cardview.widget.CardView
+        android:id="@+id/panelConnection"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="16dp"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        app:cardCornerRadius="12dp"
+        app:cardElevation="8dp"
+        app:cardBackgroundColor="#F5F5F5"
         android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/tvStatus">
+        app:layout_constraintTop_toBottomOf="@+id/headerLayout"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        android:layout_marginBottom="16dp">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:gravity="center">
+            android:padding="16dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Gestión de Dispositivos"
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
+
+            <TextView
+                android:id="@+id/tvStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Estado: Inactivo"
+                android:textSize="12sp"
+                android:layout_marginBottom="8dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                
+                <Button
+                    android:id="@+id/btnScan"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Escanear"
+                    android:layout_marginEnd="4dp"/>
+
+                <Button
+                    android:id="@+id/btnDisconnect"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Desconectar"
+                    android:enabled="false"
+                    android:layout_marginStart="4dp"/>
+            </LinearLayout>
+
+            <androidx.recyclerview.widget.RecyclerView
+                android:id="@+id/rvDevices"
+                android:layout_width="match_parent"
+                android:layout_height="150dp"
+                android:layout_marginTop="8dp"
+                android:background="#FFFFFF"/>
+                
+            <Button
+                android:id="@+id/btnClosePanel"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Ocultar Panel"
+                android:textColor="#555555"/>
+        </LinearLayout>
+    </androidx.cardview.widget.CardView>
+
+    <!-- PANEL DE CONTROLES (Siempre visible, pero deshabilitado si no hay conexión) -->
+    <ScrollView
+        android:id="@+id/layoutControls"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintTop_toBottomOf="@+id/headerLayout">
+        <!-- Nota: layoutControls ya no depende de rvDevices, sino del header -->
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:paddingBottom="32dp">
 
             <TextView
                 android:layout_width="match_parent"
@@ -73,18 +139,20 @@
                 android:gravity="center"
                 android:layout_marginBottom="16dp"/>
 
-            <!-- Selector de Protocolo (Horizontal Scroll para más opciones) -->
+            <!-- Selector de Protocolo (OCULTO - Por defecto TRIONES) -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Protocolo (Prueba si no responde):"
                 android:textSize="12sp"
-                android:layout_marginBottom="4dp"/>
+                android:layout_marginBottom="4dp"
+                android:visibility="gone"/>
                 
             <HorizontalScrollView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp">
+                android:layout_marginBottom="16dp"
+                android:visibility="gone">
                 
                 <RadioGroup
                     android:id="@+id/rgProtocol"
@@ -96,14 +164,14 @@
                         android:id="@+id/rbMagic"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Magic"
-                        android:checked="true"/>
+                        android:text="Magic"/>
                         
                     <RadioButton
                         android:id="@+id/rbTriones"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Triones"/>
+                        android:text="Triones"
+                        android:checked="true"/>
 
                     <RadioButton
                         android:id="@+id/rbZengge"
@@ -136,12 +204,13 @@
                 android:background="#FFFFFF"
                 android:layout_marginBottom="16dp"/>
 
-            <!-- Control de Brillo -->
+            <!-- Control de Brillo (MEJORADO) -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Brillo"
-                android:textStyle="bold"/>
+                android:textStyle="bold"
+                android:layout_marginBottom="8dp"/>
             
             <SeekBar
                 android:id="@+id/sbBrightness"
@@ -149,8 +218,13 @@
                 android:layout_height="wrap_content"
                 android:max="100"
                 android:progress="100"
-                android:layout_marginBottom="16dp"
-                android:paddingHorizontal="16dp"/>
+                android:layout_marginBottom="24dp"
+                android:paddingHorizontal="8dp"
+                android:progressDrawable="@drawable/seekbar_gradient"
+                android:thumb="@drawable/seekbar_thumb"
+                android:minHeight="20dp"
+                android:maxHeight="20dp"
+                android:splitTrack="false"/>
 
             <!-- Favoritos -->
             <TextView
@@ -213,7 +287,7 @@
                     style="@style/Widget.AppCompat.Button.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Flash"
+                    android:text="Rápido"
                     android:layout_marginEnd="8dp"/>
 
                 <Button
@@ -221,7 +295,7 @@
                     style="@style/Widget.AppCompat.Button.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Strobe"
+                    android:text="Intermitente"
                     android:layout_marginEnd="8dp"/>
 
                 <Button
@@ -229,7 +303,7 @@
                     style="@style/Widget.AppCompat.Button.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="Fade"/>
+                    android:text="Suave"/>
             </LinearLayout>
 
              <!-- Botón Modo Música y Power -->

@@ -27,6 +27,7 @@ import android.os.Message
 import android.util.Log
 import android.view.View
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.RadioGroup
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -34,6 +35,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.cardview.widget.CardView
 import androidx.core.app.ActivityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -50,6 +52,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnDisconnect: Button
     private lateinit var rvDevices: RecyclerView
     private lateinit var layoutControls: ScrollView
+    
+    // Panel de Conexión Desplegable
+    private lateinit var panelConnection: CardView
+    private lateinit var btnToggleConnectionPanel: ImageButton
+    private lateinit var btnClosePanel: Button
+    private lateinit var tvCurrentDevice: TextView
     
     // Vistas de control
     private lateinit var colorWheel: ColorWheelView
@@ -115,8 +123,9 @@ class MainActivity : AppCompatActivity() {
                     when (msg.arg1) {
                         BluetoothService.STATE_CONNECTED -> {
                             tvStatus.text = "Estado: Conectado a $connectedDeviceName (Clásico)"
+                            updateConnectionUI(true, connectedDeviceName)
                             deviceAdapter.notifyDataSetChanged()
-                            showControls(true)
+                            
                             // Guardar dispositivo conectado
                             pendingDevice?.let { saveLastDevice(it.address) }
                         }
@@ -126,7 +135,7 @@ class MainActivity : AppCompatActivity() {
                         BluetoothService.STATE_NONE -> {
                             if (!isBleConnected && !isBleConnecting) {
                                 tvStatus.text = "Estado: Inactivo"
-                                showControls(false)
+                                updateConnectionUI(false, null)
                             }
                         }
                     }
@@ -172,7 +181,7 @@ class MainActivity : AppCompatActivity() {
                     isBleConnected = false
                     runOnUiThread {
                         tvStatus.text = "Desconectado (BLE)"
-                        showControls(false)
+                        updateConnectionUI(false, null)
                     }
                     gatt.close()
                 }
@@ -194,7 +203,7 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (bleWriteCharacteristic != null) {
                         tvStatus.text = "Conectado y listo (BLE)"
-                        showControls(true)
+                        updateConnectionUI(true, connectedDeviceName)
                     } else {
                         tvStatus.text = "Conectado (Sin escritura)"
                         Toast.makeText(this@MainActivity, "Error: No se encontró característica de escritura BLE.", Toast.LENGTH_LONG).show()
@@ -262,6 +271,12 @@ class MainActivity : AppCompatActivity() {
         rvDevices = findViewById(R.id.rvDevices)
         layoutControls = findViewById(R.id.layoutControls)
         
+        // Panel Conexión
+        panelConnection = findViewById(R.id.panelConnection)
+        btnToggleConnectionPanel = findViewById(R.id.btnToggleConnectionPanel)
+        btnClosePanel = findViewById(R.id.btnClosePanel)
+        tvCurrentDevice = findViewById(R.id.tvCurrentDevice)
+        
         colorWheel = findViewById(R.id.colorWheel)
         viewSelectedColor = findViewById(R.id.viewSelectedColor)
         sbBrightness = findViewById(R.id.sbBrightness)
@@ -300,6 +315,14 @@ class MainActivity : AppCompatActivity() {
         
         btnDisconnect.setOnClickListener {
             disconnect()
+        }
+        
+        btnToggleConnectionPanel.setOnClickListener {
+            toggleConnectionPanel()
+        }
+        
+        btnClosePanel.setOnClickListener {
+            panelConnection.visibility = View.GONE
         }
         
         // Listener de cambio de color (mientras se mueve el dedo) - Con Throttling
@@ -379,6 +402,49 @@ class MainActivity : AppCompatActivity() {
         disconnectBle()
     }
     
+    // --- Gestión de UI de Conexión ---
+    
+    private fun toggleConnectionPanel() {
+        if (panelConnection.visibility == View.VISIBLE) {
+            panelConnection.visibility = View.GONE
+        } else {
+            panelConnection.visibility = View.VISIBLE
+        }
+    }
+    
+    private fun updateConnectionUI(connected: Boolean, deviceName: String?) {
+        if (connected) {
+            // Ocultar panel de conexión y mostrar controles
+            panelConnection.visibility = View.GONE
+            layoutControls.visibility = View.VISIBLE
+            
+            // Actualizar botones
+            btnScan.isEnabled = false
+            btnDisconnect.isEnabled = true
+            
+            // Actualizar cabecera
+            tvCurrentDevice.text = "Conectado a: ${deviceName ?: "Desconocido"}"
+            tvCurrentDevice.setTextColor(Color.parseColor("#4CAF50")) // Verde
+        } else {
+            // Ocultar controles (opcional, o dejarlos visibles pero inactivos)
+             // layoutControls.visibility = View.GONE // Comentado para no ocultarlos agresivamente
+            
+            // Actualizar botones
+            btnScan.isEnabled = true
+            btnDisconnect.isEnabled = false
+            stopAudioAnalysis()
+            
+            // Actualizar cabecera
+            tvCurrentDevice.text = "Desconectado"
+            tvCurrentDevice.setTextColor(Color.parseColor("#555555")) // Gris
+        }
+    }
+    
+    // Antiguo showControls renombrado y adaptado dentro de updateConnectionUI
+    private fun showControls(connected: Boolean) {
+        updateConnectionUI(connected, connectedDeviceName)
+    }
+    
     // --- Favoritos ---
     
     private fun setupFavoriteButtons() {
@@ -442,21 +508,6 @@ class MainActivity : AppCompatActivity() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error en auto-conexión: ${e.message}")
             }
-        }
-    }
-    
-    private fun showControls(connected: Boolean) {
-        if (connected) {
-            rvDevices.visibility = View.GONE
-            layoutControls.visibility = View.VISIBLE
-            btnScan.isEnabled = false
-            btnDisconnect.isEnabled = true
-        } else {
-            rvDevices.visibility = View.VISIBLE
-            layoutControls.visibility = View.GONE
-            btnScan.isEnabled = true
-            btnDisconnect.isEnabled = false
-            stopAudioAnalysis() // Detener análisis si nos desconectamos
         }
     }
     
@@ -547,7 +598,7 @@ class MainActivity : AppCompatActivity() {
         isBleConnecting = false
         bluetoothService?.stop()
         disconnectBle()
-        showControls(false)
+        updateConnectionUI(false, null)
         tvStatus.text = "Desconectado"
         // Opcional: ¿Olvidar dispositivo al desconectar manualmente?
         // val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
