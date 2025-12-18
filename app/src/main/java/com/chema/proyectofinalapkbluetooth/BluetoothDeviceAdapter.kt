@@ -19,8 +19,9 @@ class BluetoothDeviceAdapter(
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
+        // ACTUALIZADO: Usar el nuevo layout 'item_bluetooth_device'
         val view = LayoutInflater.from(parent.context)
-            .inflate(R.layout.item_device, parent, false)
+            .inflate(R.layout.item_bluetooth_device, parent, false)
         return ViewHolder(view)
     }
 

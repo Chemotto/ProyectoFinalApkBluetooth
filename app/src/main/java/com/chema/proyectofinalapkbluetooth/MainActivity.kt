@@ -13,12 +13,11 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
-import android.content.res.ColorStateList
 import android.graphics.Color
-import android.media.AudioFormat
-import android.media.AudioRecord
-import android.media.MediaRecorder
+import android.media.audiofx.Visualizer.OnDataCaptureListener
+import android.media.audiofx.Visualizer.SUCCESS
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -26,165 +25,102 @@ import android.os.Looper
 import android.os.Message
 import android.util.Log
 import android.view.View
-import android.view.ViewGroup
-import android.widget.Button
-import android.widget.ImageButton
-import android.widget.RadioGroup
-import android.widget.ScrollView
 import android.widget.SeekBar
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
-import androidx.cardview.widget.CardView
 import androidx.core.app.ActivityCompat
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import kotlin.math.abs
-import kotlin.math.log10
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.chip.Chip
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var bluetoothAdapter: BluetoothAdapter
-    private lateinit var tvStatus: TextView
-    private lateinit var btnScan: Button
-    private lateinit var btnDisconnect: Button
+    
+    // Vistas
+    private lateinit var chipStatus: Chip
+    private lateinit var btnScan: MaterialButton
     private lateinit var rvDevices: RecyclerView
-    // Cambiado de ScrollView a ViewGroup para permitir layouts flexibles (ConstraintLayout)
-    private lateinit var layoutControls: ViewGroup 
-    
-    // Panel de Conexión Desplegable
-    private lateinit var panelConnection: CardView
-    private lateinit var btnToggleConnectionPanel: ImageButton
-    private lateinit var btnClosePanel: Button
-    private lateinit var tvCurrentDevice: TextView
-    
-    // Vistas de control
     private lateinit var colorWheel: ColorWheelView
     private lateinit var viewSelectedColor: View
     private lateinit var sbBrightness: SeekBar
-    private lateinit var rgProtocol: RadioGroup
-    private lateinit var btnPower: Button
-    private lateinit var btnFlash: Button
-    private lateinit var btnStrobe: Button
-    private lateinit var btnFade: Button
-    private lateinit var btnMusicMode: Button
+    private lateinit var btnPower: MaterialButton
+    private lateinit var btnFlash: MaterialButton
+    private lateinit var btnStrobe: MaterialButton
+    private lateinit var btnFade: MaterialButton
+    private lateinit var btnMusicMode: MaterialButton
     
-    // Botones de favoritos
-    private lateinit var btnFav1: Button
-    private lateinit var btnFav2: Button
-    private lateinit var btnFav3: Button
-    private lateinit var btnFav4: Button
-    
-    // Estado del color y encendido
+    // Estado
     private var lastSelectedColor: Int = Color.WHITE
     private var isLightOn = true
-    
-    // Control de flujo (Throttling) para no saturar Bluetooth
-    private var lastSendTime: Long = 0
-    private val SEND_INTERVAL_MS = 150 // Enviar máximo cada 150ms
+    private var isMusicModeActive = false
+    private var connectingDevice: BluetoothDevice? = null 
     
     private lateinit var deviceAdapter: BluetoothDeviceAdapter
     private val deviceList = ArrayList<BluetoothDevice>()
 
-    // Servicio de Bluetooth Clásico
+    // Bluetooth Services
     private var bluetoothService: BluetoothService? = null
-    
-    // Variables para Bluetooth LE (BLE)
     private var bluetoothGatt: BluetoothGatt? = null
     private var bleWriteCharacteristic: BluetoothGattCharacteristic? = null
     private var isBleConnected = false
     private var isBleConnecting = false
 
-    // Referencia al dispositivo que estamos intentando conectar (para guardar en preferencias)
-    private var pendingDevice: BluetoothDevice? = null
-
     private var connectedDeviceName: String? = null
     
-    // AudioRecord (Micrófono) para modo música universal
-    private var audioRecord: AudioRecord? = null
-    private var isMusicModeActive = false
-    private var audioThread: Thread? = null
-    private val SAMPLE_RATE = 44100
-    private var bufferSize = 0
+    // Audio
+    private var visualizer: android.media.audiofx.Visualizer? = null
 
     companion object {
         private const val TAG = "MainActivity"
-        private const val PREFS_NAME = "BluetoothPrefs"
+        private const val PREFS_NAME = "LedControlPrefs"
         private const val KEY_LAST_DEVICE = "last_device_address"
-        private const val KEY_FAV_COLOR_PREFIX = "fav_color_"
     }
 
-    // Handler para recibir mensajes del BluetoothService (Clásico)
+    // Handler Bluetooth Clásico
     private val handler = object : Handler(Looper.getMainLooper()) {
         override fun handleMessage(msg: Message) {
             when (msg.what) {
                 BluetoothService.MESSAGE_STATE_CHANGE -> {
                     when (msg.arg1) {
                         BluetoothService.STATE_CONNECTED -> {
-                            tvStatus.text = "Estado: Conectado a $connectedDeviceName (Clásico)"
-                            updateConnectionUI(true, connectedDeviceName)
-                            deviceAdapter.notifyDataSetChanged()
-                            
-                            // Guardar dispositivo conectado
-                            pendingDevice?.let { saveLastDevice(it.address) }
+                            updateConnectionStatus(true, "Clásico")
+                            connectingDevice?.let { saveLastDevice(it.address) }
                         }
-                        BluetoothService.STATE_CONNECTING -> {
-                            tvStatus.text = "Estado: Conectando..."
-                        }
+                        BluetoothService.STATE_CONNECTING -> updateStatusText("Conectando...")
                         BluetoothService.STATE_NONE -> {
-                            if (!isBleConnected && !isBleConnecting) {
-                                tvStatus.text = "Estado: Inactivo"
-                                updateConnectionUI(false, null)
-                            }
+                            if (!isBleConnected && !isBleConnecting) updateConnectionStatus(false)
                         }
                     }
                 }
-                BluetoothService.MESSAGE_READ -> { }
                 BluetoothService.MESSAGE_DEVICE_NAME -> {
                     connectedDeviceName = msg.data.getString(BluetoothService.DEVICE_NAME)
                     Toast.makeText(applicationContext, "Conectado a $connectedDeviceName", Toast.LENGTH_SHORT).show()
-                }
-                BluetoothService.MESSAGE_TOAST -> {
-                    if (!isBleConnected && !isBleConnecting) { 
-                        Toast.makeText(applicationContext, msg.data.getString(BluetoothService.TOAST), Toast.LENGTH_SHORT).show()
-                    }
                 }
             }
         }
     }
 
-    // Callbacks para Bluetooth LE (BLE)
+    // Callback BLE
     private val gattCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            Log.d(TAG, "onConnectionStateChange: status=$status newState=$newState")
-            
             if (status == BluetoothGatt.GATT_SUCCESS) {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     isBleConnecting = false
                     isBleConnected = true
-                    connectedDeviceName = gatt.device.name ?: "Dispositivo BLE"
-                    
-                    // Guardar dispositivo conectado
-                    saveLastDevice(gatt.device.address)
-                    
-                    runOnUiThread {
-                        tvStatus.text = "Conectado. Buscando servicios..."
+                    connectedDeviceName = gatt.device.name ?: "BLE Device"
+                    runOnUiThread { 
+                        updateStatusText("Descubriendo servicios...")
+                        saveLastDevice(gatt.device.address)
                     }
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        gatt.discoverServices()
-                    }, 300)
-                    
+                    gatt.discoverServices()
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     isBleConnecting = false
                     isBleConnected = false
-                    runOnUiThread {
-                        tvStatus.text = "Desconectado (BLE)"
-                        updateConnectionUI(false, null)
-                    }
+                    runOnUiThread { updateConnectionStatus(false) }
                     gatt.close()
                 }
             } else {
@@ -192,8 +128,10 @@ class MainActivity : AppCompatActivity() {
                 isBleConnecting = false
                 isBleConnected = false
                 runOnUiThread {
-                    tvStatus.text = "Error de conexión BLE: $status"
-                    Toast.makeText(this@MainActivity, "Error al conectar BLE (Status: $status). Reintenta.", Toast.LENGTH_LONG).show()
+                    updateConnectionStatus(false)
+                    if (status == 133) {
+                         Toast.makeText(this@MainActivity, "Error 133: Reinicia el Bluetooth.", Toast.LENGTH_LONG).show()
+                    }
                 }
                 gatt.close()
             }
@@ -204,59 +142,35 @@ class MainActivity : AppCompatActivity() {
                 bleWriteCharacteristic = findWriteCharacteristic(gatt)
                 runOnUiThread {
                     if (bleWriteCharacteristic != null) {
-                        tvStatus.text = "Conectado y listo (BLE)"
-                        updateConnectionUI(true, connectedDeviceName)
+                        updateConnectionStatus(true, "BLE")
                     } else {
-                        tvStatus.text = "Conectado (Sin escritura)"
-                        Toast.makeText(this@MainActivity, "Error: No se encontró característica de escritura BLE.", Toast.LENGTH_LONG).show()
+                        updateStatusText("Conectado (Sin escritura)")
                     }
-                }
-            } else {
-                Log.w(TAG, "onServicesDiscovered recibió: $status")
-                runOnUiThread {
-                    Toast.makeText(this@MainActivity, "Error al descubrir servicios BLE (Status: $status).", Toast.LENGTH_LONG).show()
                 }
             }
         }
-
-        override fun onCharacteristicWrite(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic, status: Int) {
-            // Silencioso, no es necesario hacer nada aquí
-        }
     }
 
-    // Receiver para detectar dispositivos encontrados
     private val receiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
         override fun onReceive(context: Context, intent: Intent) {
-            val action = intent.action
-            when (action) {
+            when (intent.action) {
                 BluetoothDevice.ACTION_FOUND -> {
                     val device: BluetoothDevice? = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE)
                     device?.let {
-                        val typeStr = when(it.type) {
-                            BluetoothDevice.DEVICE_TYPE_CLASSIC -> "Clásico"
-                            BluetoothDevice.DEVICE_TYPE_LE -> "BLE"
-                            BluetoothDevice.DEVICE_TYPE_DUAL -> "Dual"
-                            else -> "Desconocido"
-                        }
-                        Log.d(TAG, "Encontrado: ${it.name} [${it.address}] Tipo: $typeStr")
                         if (deviceList.none { d -> d.address == it.address }) {
                             deviceList.add(it)
                             deviceAdapter.notifyItemInserted(deviceList.size - 1)
                         }
                     }
                 }
-                BluetoothAdapter.ACTION_DISCOVERY_STARTED -> {
-                    tvStatus.text = "Estado: Escaneando..."
-                }
+                BluetoothAdapter.ACTION_DISCOVERY_STARTED -> updateStatusText("Escaneando...")
                 BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
-                    if (bluetoothService?.getState() != BluetoothService.STATE_CONNECTED && !isBleConnected && !isBleConnecting) {
-                         if (deviceList.isEmpty()) {
-                            tvStatus.text = "Estado: Escaneo finalizado (Sin resultados)"
-                        } else {
-                            tvStatus.text = "Estado: Escaneo finalizado (${deviceList.size} disp.)"
-                        }
-                    }
+                     if (!isBleConnected && bluetoothService?.getState() != BluetoothService.STATE_CONNECTED) {
+                         updateStatusText("Escaneo finalizado")
+                         btnScan.isEnabled = true
+                         btnScan.text = "Escanear"
+                     }
                 }
             }
         }
@@ -266,106 +180,66 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // Inicializar vistas
-        tvStatus = findViewById(R.id.tvStatus)
+        // Inicializar Vistas
+        chipStatus = findViewById(R.id.chipStatus)
         btnScan = findViewById(R.id.btnScan)
-        btnDisconnect = findViewById(R.id.btnDisconnect)
         rvDevices = findViewById(R.id.rvDevices)
-        layoutControls = findViewById(R.id.layoutControls)
-        
-        // Panel Conexión
-        panelConnection = findViewById(R.id.panelConnection)
-        btnToggleConnectionPanel = findViewById(R.id.btnToggleConnectionPanel)
-        btnClosePanel = findViewById(R.id.btnClosePanel)
-        tvCurrentDevice = findViewById(R.id.tvCurrentDevice)
-        
         colorWheel = findViewById(R.id.colorWheel)
         viewSelectedColor = findViewById(R.id.viewSelectedColor)
         sbBrightness = findViewById(R.id.sbBrightness)
-        rgProtocol = findViewById(R.id.rgProtocol)
         btnPower = findViewById(R.id.btnPower)
         btnFlash = findViewById(R.id.btnFlash)
         btnStrobe = findViewById(R.id.btnStrobe)
         btnFade = findViewById(R.id.btnFade)
         btnMusicMode = findViewById(R.id.btnMusicMode)
-        
-        btnFav1 = findViewById(R.id.btnFav1)
-        btnFav2 = findViewById(R.id.btnFav2)
-        btnFav3 = findViewById(R.id.btnFav3)
-        btnFav4 = findViewById(R.id.btnFav4)
 
-        // Configurar RecyclerView
-        deviceAdapter = BluetoothDeviceAdapter(deviceList) { device ->
-            connectToDevice(device)
-        }
+        updateConnectionStatus(false)
+        
+        deviceAdapter = BluetoothDeviceAdapter(deviceList) { device -> connectToDevice(device) }
         rvDevices.layoutManager = LinearLayoutManager(this)
         rvDevices.adapter = deviceAdapter
 
-        // Inicializar BluetoothAdapter
         val bluetoothManager = getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager
         bluetoothAdapter = bluetoothManager.adapter
-
-        // Inicializar BluetoothService (Clásico)
         bluetoothService = BluetoothService(this, handler)
 
-        // Configurar Listeners de UI
+        // Listeners
         btnScan.setOnClickListener {
-            if (checkPermissions()) {
-                startScanning()
-            }
+            if (checkPermissions()) startScanning()
         }
         
-        btnDisconnect.setOnClickListener {
-            disconnect()
-        }
-        
-        btnToggleConnectionPanel.setOnClickListener {
-            toggleConnectionPanel()
-        }
-        
-        btnClosePanel.setOnClickListener {
-            panelConnection.visibility = View.GONE
-        }
-        
-        // Listener de cambio de color (mientras se mueve el dedo) - Con Throttling
         colorWheel.onColorChangedListener = { color ->
             lastSelectedColor = color
-            updatePreviewAndSendThrottled()
-        }
-        
-        // Listener de color final (al levantar el dedo) - Envío inmediato
-        colorWheel.onColorSelectedListener = { color ->
-            lastSelectedColor = color
-            updatePreviewAndSend() // Envío forzado al final
+            updatePreviewAndSend()
         }
         
         sbBrightness.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                if (fromUser) {
-                    updatePreviewAndSendThrottled()
-                }
+                if (fromUser) updatePreviewColorOnly()
             }
-
-            override fun onStartTrackingTouch(seekBar: SeekBar?) { }
-
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {
-                updatePreviewAndSend() // Envío forzado al final
-            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) { updatePreviewAndSend() }
         })
         
+        // Listener para botones de colores favoritos
+        findViewById<View>(R.id.btnColor1).setOnClickListener { setFavoriteColor(Color.CYAN) }
+        findViewById<View>(R.id.btnColor2).setOnClickListener { setFavoriteColor(Color.MAGENTA) }
+        findViewById<View>(R.id.btnColor3).setOnClickListener { setFavoriteColor(Color.parseColor("#8A2BE2")) } // BlueViolet
+        findViewById<View>(R.id.btnColor4).setOnClickListener { setFavoriteColor(Color.parseColor("#00FF7F")) } // SpringGreen
+
         btnPower.setOnClickListener { 
             isLightOn = !isLightOn
-            sendPowerCommand(isLightOn) 
+            sendPowerCommand(isLightOn)
+            btnPower.text = if (isLightOn) "Encendido" else "Apagado"
+            btnPower.alpha = if (isLightOn) 1.0f else 0.5f
         }
         
         btnFlash.setOnClickListener { sendEffectCommand(0x25) }
         btnStrobe.setOnClickListener { sendEffectCommand(0x26) }
         btnFade.setOnClickListener { sendEffectCommand(0x27) }
-        
         btnMusicMode.setOnClickListener { toggleMusicMode() }
-        
-        setupFavoriteButtons()
 
+        // Inicializar
         val filter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_FOUND)
             addAction(BluetoothAdapter.ACTION_DISCOVERY_STARTED)
@@ -373,28 +247,12 @@ class MainActivity : AppCompatActivity() {
         }
         registerReceiver(receiver, filter)
 
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
-            val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
-            insets
-        }
-
-        // INTENTAR AUTOCONEXIÓN SI HAY PERMISOS
+        // Comprobar permisos y autoconectar
         if (checkPermissions()) {
-            attemptAutoConnect()
+            if (!attemptAutoConnect()) {
+                startScanning()
+            }
         }
-    }
-
-    override fun onStart() {
-        super.onStart()
-        if (bluetoothService == null) {
-            bluetoothService = BluetoothService(this, handler)
-        }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        stopAudioAnalysis()
     }
 
     override fun onDestroy() {
@@ -402,185 +260,90 @@ class MainActivity : AppCompatActivity() {
         unregisterReceiver(receiver)
         bluetoothService?.stop()
         disconnectBle()
+        stopVisualizer()
     }
     
-    // --- Gestión de UI de Conexión ---
-    
-    private fun toggleConnectionPanel() {
-        if (panelConnection.visibility == View.VISIBLE) {
-            panelConnection.visibility = View.GONE
-        } else {
-            panelConnection.visibility = View.VISIBLE
-        }
-    }
-    
-    private fun updateConnectionUI(connected: Boolean, deviceName: String?) {
-        if (connected) {
-            // Ocultar panel de conexión y mostrar controles
-            panelConnection.visibility = View.GONE
-            layoutControls.visibility = View.VISIBLE
-            
-            // Actualizar botones
-            btnScan.isEnabled = false
-            btnDisconnect.isEnabled = true
-            
-            // Actualizar cabecera
-            tvCurrentDevice.text = "Conectado a: ${deviceName ?: "Desconocido"}"
-            tvCurrentDevice.setTextColor(Color.parseColor("#4CAF50")) // Verde
-        } else {
-            // Ocultar controles (opcional, o dejarlos visibles pero inactivos)
-             // layoutControls.visibility = View.GONE // Comentado para no ocultarlos agresivamente
-            
-            // Actualizar botones
-            btnScan.isEnabled = true
-            btnDisconnect.isEnabled = false
-            stopAudioAnalysis()
-            
-            // Actualizar cabecera
-            tvCurrentDevice.text = "Desconectado"
-            tvCurrentDevice.setTextColor(Color.parseColor("#555555")) // Gris
-        }
-    }
-    
-    // Antiguo showControls renombrado y adaptado dentro de updateConnectionUI
-    private fun showControls(connected: Boolean) {
-        updateConnectionUI(connected, connectedDeviceName)
-    }
-    
-    // --- Favoritos ---
-    
-    private fun setupFavoriteButtons() {
-        val buttons = listOf(btnFav1, btnFav2, btnFav3, btnFav4)
-        
-        buttons.forEachIndexed { index, button ->
-            // Cargar color guardado
-            val savedColor = loadFavoriteColor(index)
-            button.backgroundTintList = ColorStateList.valueOf(savedColor)
-            
-            // Click: Aplicar color
-            button.setOnClickListener {
-                val color = loadFavoriteColor(index)
-                lastSelectedColor = color
-                // Actualizar UI
-                viewSelectedColor.setBackgroundColor(color)
-                // Enviar color
-                sendColor(color)
-                Toast.makeText(this, "Color favorito ${index + 1} aplicado", Toast.LENGTH_SHORT).show()
-            }
-            
-            // Long Click: Guardar color actual
-            button.setOnLongClickListener {
-                saveFavoriteColor(index, lastSelectedColor)
-                button.backgroundTintList = ColorStateList.valueOf(lastSelectedColor)
-                Toast.makeText(this, "Color guardado en favorito ${index + 1}", Toast.LENGTH_SHORT).show()
-                true
-            }
-        }
-    }
-    
-    private fun saveFavoriteColor(index: Int, color: Int) {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putInt(KEY_FAV_COLOR_PREFIX + index, color).apply()
-    }
-    
-    private fun loadFavoriteColor(index: Int): Int {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        // Por defecto: Gris claro si no hay nada guardado
-        return prefs.getInt(KEY_FAV_COLOR_PREFIX + index, Color.LTGRAY)
-    }
-    
-    // --- Gestión de Preferencias (Auto-Connect) ---
+    // --- Auto Connect ---
 
     private fun saveLastDevice(address: String) {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_LAST_DEVICE, address).apply()
-        Log.d(TAG, "Dispositivo guardado para auto-conexión: $address")
     }
 
-    private fun attemptAutoConnect() {
+    private fun getLastDevice(): String? {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val lastAddress = prefs.getString(KEY_LAST_DEVICE, null)
-        
-        if (lastAddress != null && bluetoothAdapter.isEnabled) {
+        return prefs.getString(KEY_LAST_DEVICE, null)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun attemptAutoConnect(): Boolean {
+        val lastAddress = getLastDevice()
+        if (lastAddress != null) {
             try {
-                val device = bluetoothAdapter.getRemoteDevice(lastAddress)
-                Log.d(TAG, "Intentando auto-conexión a: $lastAddress")
-                Toast.makeText(this, "Reconectando...", Toast.LENGTH_SHORT).show()
-                connectToDevice(device)
+                if (BluetoothAdapter.checkBluetoothAddress(lastAddress)) {
+                    val device = bluetoothAdapter.getRemoteDevice(lastAddress)
+                    Log.d(TAG, "Autoconectando a: $lastAddress")
+                    connectToDevice(device)
+                    return true
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Error en auto-conexión: ${e.message}")
+                Log.e(TAG, "Error en autoconexión", e)
             }
         }
+        return false
     }
     
-    private fun logMessage(msg: String) {
-        // Silenciado
-    }
+    // --- UI Helpers ---
     
-    // --- Lógica de Brillo y Color ---
-    
-    private fun updatePreviewAndSendThrottled() {
-        val brightness = sbBrightness.progress / 100f
-        val colorWithBrightness = applyBrightness(lastSelectedColor, brightness)
-        viewSelectedColor.setBackgroundColor(colorWithBrightness)
-        
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastSendTime > SEND_INTERVAL_MS) {
-            sendColor(colorWithBrightness)
-            lastSendTime = currentTime
+    private fun updateConnectionStatus(connected: Boolean, type: String = "") {
+        if (connected) {
+            chipStatus.text = "Conectado ($type)"
+            chipStatus.setChipBackgroundColorResource(android.R.color.holo_green_dark)
+            btnScan.isEnabled = false
+            btnScan.text = "Desconectar"
+            btnScan.setOnClickListener { disconnect() }
+            rvDevices.visibility = View.GONE
+        } else {
+            chipStatus.text = "Desconectado"
+            chipStatus.setChipBackgroundColorResource(android.R.color.holo_red_dark)
+            btnScan.isEnabled = true
+            btnScan.text = "Escanear"
+            btnScan.setOnClickListener { if (checkPermissions()) startScanning() }
+            rvDevices.visibility = View.VISIBLE
         }
     }
     
-    private fun updatePreviewAndSend() {
-        val brightness = sbBrightness.progress / 100f
-        val colorWithBrightness = applyBrightness(lastSelectedColor, brightness)
-        viewSelectedColor.setBackgroundColor(colorWithBrightness)
-        sendColor(colorWithBrightness)
-        lastSendTime = System.currentTimeMillis() // Reseteamos el timer
+    private fun updateStatusText(text: String) {
+        chipStatus.text = text
     }
-    
-    private fun applyBrightness(color: Int, factor: Float): Int {
-        val r = (Color.red(color) * factor).toInt()
-        val g = (Color.green(color) * factor).toInt()
-        val b = (Color.blue(color) * factor).toInt()
-        return Color.rgb(r, g, b)
-    }
-    
-    // --- Lógica de Conexión Unificada ---
+
+    // --- Bluetooth Logic ---
 
     @SuppressLint("MissingPermission")
     private fun connectToDevice(device: BluetoothDevice) {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED) {
-             if (bluetoothAdapter.isDiscovering) {
-                 bluetoothAdapter.cancelDiscovery()
-             }
+             if (bluetoothAdapter.isDiscovering) bluetoothAdapter.cancelDiscovery()
         }
         
-        // Guardamos referencia para saber qué guardar si conecta con éxito
-        pendingDevice = device
-        
-        val type = device.type
-        Log.d(TAG, "Conectando a dispositivo: ${device.name}, Tipo: $type")
+        connectingDevice = device
+        updateStatusText("Conectando...")
         
         Handler(Looper.getMainLooper()).postDelayed({
-            if (type != BluetoothDevice.DEVICE_TYPE_CLASSIC) {
-                 Log.d(TAG, "Intentando conexión BLE (Por defecto)")
+            if (device.type != BluetoothDevice.DEVICE_TYPE_CLASSIC) {
                  isBleConnecting = true
                  bluetoothService?.stop()
                  connectBle(device)
             } else {
-                 Log.d(TAG, "Intentando conexión Clásica (Tipo CLASSIC)")
                  isBleConnecting = false
                  disconnectBle()
                  bluetoothService?.connect(device)
             }
-        }, 600)
+        }, 500)
     }
     
     @SuppressLint("MissingPermission")
     private fun connectBle(device: BluetoothDevice) {
         disconnectBle()
-        tvStatus.text = "Conectando (BLE)..."
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } else {
@@ -600,266 +363,89 @@ class MainActivity : AppCompatActivity() {
         isBleConnecting = false
         bluetoothService?.stop()
         disconnectBle()
-        updateConnectionUI(false, null)
-        tvStatus.text = "Desconectado"
-        // Opcional: ¿Olvidar dispositivo al desconectar manualmente?
-        // val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        // prefs.edit().remove(KEY_LAST_DEVICE).apply()
+        updateConnectionStatus(false)
+        stopVisualizer()
     }
     
-    // --- Envío de Comandos BLE (SOPORTE MULTI-PROTOCOLO) ---
+    // --- Comandos ---
     
+    private fun setFavoriteColor(color: Int) {
+        lastSelectedColor = color
+        updatePreviewAndSend()
+    }
+    
+    private fun updatePreviewColorOnly() {
+        val brightness = sbBrightness.progress / 100f
+        viewSelectedColor.setBackgroundColor(applyBrightness(lastSelectedColor, brightness))
+    }
+    
+    private fun updatePreviewAndSend() {
+        val brightness = sbBrightness.progress / 100f
+        val finalColor = applyBrightness(lastSelectedColor, brightness)
+        viewSelectedColor.setBackgroundColor(finalColor)
+        sendColor(finalColor)
+    }
+    
+    private fun applyBrightness(color: Int, factor: Float): Int {
+        val r = (Color.red(color) * factor).toInt()
+        val g = (Color.green(color) * factor).toInt()
+        val b = (Color.blue(color) * factor).toInt()
+        return Color.rgb(r, g, b)
+    }
+
     private fun sendColor(color: Int) {
         val r = Color.red(color)
         val g = Color.green(color)
         val b = Color.blue(color)
-
-        val command = when(rgProtocol.checkedRadioButtonId) {
-            R.id.rbMagic -> createMagicHomeColorCommand(r, g, b)
-            R.id.rbTriones -> byteArrayOf(0x56, r.toByte(), g.toByte(), b.toByte(), 0x00, 0xF0.toByte(), 0xAA.toByte())
-            R.id.rbZengge -> byteArrayOf(0x7E, 0x00, 0x05, 0x03, r.toByte(), g.toByte(), b.toByte(), 0x00, 0xEF.toByte())
-            R.id.rbGeneric -> byteArrayOf(r.toByte(), g.toByte(), b.toByte())
-            else -> "$r,$g,$b" 
-        }
         
-        if (command is ByteArray) {
-            sendBytes(command)
-        } else if (command is String) {
-            sendMessage(command)
-        }
+        // Protocolo BLE Magic Home: 0x31 R G B 00 00 0F Checksum
+        val sum = 0x31 + r + g + b + 0x00 + 0x00 + 0x0F
+        val checksum = (sum and 0xFF).toByte()
+        val command = byteArrayOf(0x31, r.toByte(), g.toByte(), b.toByte(), 0x00, 0x00, 0x0F, checksum)
+        
+        sendBytes(command)
     }
 
     private fun sendPowerCommand(on: Boolean) {
-        val command = when(rgProtocol.checkedRadioButtonId) {
-            // Protocolo Magic Home
-            R.id.rbMagic -> if (on) byteArrayOf(0x71, 0x23, 0x0F, 0xA3.toByte()) 
-                                else byteArrayOf(0x71, 0x24, 0x0F, 0xA4.toByte())
-                                
-            // Protocolo Triones / HappyLighting
-            R.id.rbTriones -> if (on) byteArrayOf(0xCC.toByte(), 0x23, 0x33) 
-                                else byteArrayOf(0xCC.toByte(), 0x24, 0x33)
-            
-            // Protocolo Zengge
-            R.id.rbZengge -> if (on) byteArrayOf(0x7E, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0xEF.toByte()) // ON no siempre es estándar aquí
-                             else byteArrayOf(0x7E, 0x00, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0xEF.toByte())
-
-            // Genérico
-            R.id.rbGeneric -> if (on) byteArrayOf(0xFF.toByte(), 0xFF.toByte(), 0xFF.toByte()) 
-                                else byteArrayOf(0x00, 0x00, 0x00)
-                                
-            else -> if (on) "ON" else "OFF"
-        }
-
-        if (command is ByteArray) {
-            sendBytes(command)
-        } else if (command is String) {
-            sendMessage(command)
-        }
+        // Protocolo BLE Magic Home: 0x71 23/24 0F A3/A4
+        val command = if (on) byteArrayOf(0x71, 0x23, 0x0F, 0xA3.toByte()) 
+                      else byteArrayOf(0x71, 0x24, 0x0F, 0xA4.toByte())
+        sendBytes(command)
     }
     
     private fun sendEffectCommand(effectCode: Int) {
-        val speed = 0x10 // Velocidad media
-        val command = when(rgProtocol.checkedRadioButtonId) {
-            R.id.rbMagic -> byteArrayOf(0x81.toByte(), effectCode.toByte(), speed.toByte(), 0x99.toByte())
-            R.id.rbTriones -> byteArrayOf(0xBB.toByte(), effectCode.toByte(), speed.toByte(), 0x44)
-            else -> null
-        }
-        
-        if (command != null) {
-            sendBytes(command)
-        } else {
-            Toast.makeText(this, "Efecto no disponible para este protocolo", Toast.LENGTH_SHORT).show()
-        }
-    }
-    
-    // --- Modo Música (Micrófono) ---
-    
-    private fun toggleMusicMode() {
-        if (!isMusicModeActive) {
-            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                startAudioAnalysis()
-            } else {
-                requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            }
-        } else {
-            stopAudioAnalysis()
-        }
-    }
-    
-    @SuppressLint("MissingPermission")
-    private fun startAudioAnalysis() {
-        if (isMusicModeActive) return
-
-        try {
-            bufferSize = AudioRecord.getMinBufferSize(
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            )
-
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                SAMPLE_RATE,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
-            )
-
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Toast.makeText(this, "Error: No se pudo iniciar el micrófono", Toast.LENGTH_SHORT).show()
-                return
-            }
-
-            audioRecord?.startRecording()
-            isMusicModeActive = true
-            btnMusicMode.text = "Detener Música"
-            Toast.makeText(this, "Modo Música (Micrófono) Activado", Toast.LENGTH_SHORT).show()
-
-            // Iniciar hilo de procesamiento
-            audioThread = Thread {
-                val buffer = ShortArray(bufferSize)
-                while (isMusicModeActive) {
-                    val readResult = audioRecord?.read(buffer, 0, bufferSize) ?: 0
-                    if (readResult > 0) {
-                        processAudioBuffer(buffer, readResult)
-                    }
-                }
-            }
-            audioThread?.start()
-
-        } catch (e: Exception) {
-            Log.e(TAG, "Error al iniciar AudioRecord", e)
-            Toast.makeText(this, "Error al acceder al micrófono", Toast.LENGTH_SHORT).show()
-        }
+        val speed = 0x10.toByte()
+        // Protocolo Magic Home Clásico/BLE Effect
+        val command = byteArrayOf(0x56, effectCode.toByte(), speed, 0xAA.toByte())
+        sendBytes(command)
     }
 
-    private fun stopAudioAnalysis() {
-        isMusicModeActive = false
-        try {
-            audioThread?.join(500) // Esperar a que termine el hilo
-        } catch (e: InterruptedException) {
-            e.printStackTrace()
-        }
-        
-        if (audioRecord?.state == AudioRecord.STATE_INITIALIZED) {
-            try {
-                audioRecord?.stop()
-                audioRecord?.release()
-            } catch (e: Exception) {
-                Log.e(TAG, "Error al detener AudioRecord", e)
-            }
-        }
-        audioRecord = null
-        
-        btnMusicMode.text = "Modo Música"
-        Toast.makeText(this, "Modo Música Desactivado", Toast.LENGTH_SHORT).show()
-    }
-
-    private fun processAudioBuffer(buffer: ShortArray, readSize: Int) {
-        val currentTime = System.currentTimeMillis()
-        if (currentTime - lastSendTime < SEND_INTERVAL_MS) return
-
-        // Calcular volumen (RMS)
-        var sum = 0.0
-        for (i in 0 until readSize) {
-            sum += buffer[i] * buffer[i]
-        }
-        val rms = kotlin.math.sqrt(sum / readSize)
-        val volume = (20 * log10(rms)).toInt() // Decibelios aproximados
-
-        // Umbral de silencio (ajustar según necesidad)
-        if (volume < 30) return 
-
-        // Generar color basado en el volumen para simular ritmo
-        // Volumen bajo -> Colores fríos (Azul/Verde)
-        // Volumen alto -> Colores cálidos (Rojo/Amarillo)
-        val color = volumeToColor(volume)
-        
-        sendColor(color)
-        lastSendTime = currentTime
-        
-        runOnUiThread {
-            viewSelectedColor.setBackgroundColor(color)
-        }
-    }
-
-    private fun volumeToColor(volume: Int): Int {
-        // Mapear volumen (aprox 30-90dB) a un espectro de color
-        // < 50: Azul
-        // 50-70: Verde/Amarillo
-        // > 70: Rojo/Magenta
-        
-        return when {
-            volume < 50 -> Color.rgb(0, (volume * 5).coerceIn(0, 255), 255) // Azul predominante
-            volume < 70 -> Color.rgb((volume * 3).coerceIn(0, 255), 255, 0) // Verde/Amarillo
-            else -> Color.rgb(255, 0, (volume * 2).coerceIn(0, 255)) // Rojo/Magenta
-        }
-    }
-    
-    // --- Protocolos Específicos ---
-    
-    private fun createMagicHomeColorCommand(r: Int, g: Int, b: Int): ByteArray {
-        // Formato BLE Magic Home: 31 RR GG BB 00 00 0F [Checksum]
-        val sum = 0x31 + r + g + b + 0x00 + 0x00 + 0x0F
-        val checksum = (sum and 0xFF).toByte()
-        return byteArrayOf(0x31, r.toByte(), g.toByte(), b.toByte(), 0x00, 0x00, 0x0F, checksum)
-    }
-
-    @SuppressLint("MissingPermission")
-    private fun sendMessage(message: String) {
-        if (isBleConnected) {
-            sendBleBytes(message.toByteArray())
-        } else if (bluetoothService?.getState() == BluetoothService.STATE_CONNECTED) {
-            bluetoothService?.write(message.toByteArray())
-        }
-    } 
-    
     @SuppressLint("MissingPermission")
     private fun sendBytes(bytes: ByteArray) {
         if (isBleConnected) {
-            sendBleBytes(bytes)
+            val characteristic = bleWriteCharacteristic
+            if (bluetoothGatt != null && characteristic != null) {
+                characteristic.value = bytes
+                
+                // Detección automática de capacidades
+                val properties = characteristic.properties
+                if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
+                    characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                } else {
+                    characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                }
+                
+                bluetoothGatt?.writeCharacteristic(characteristic)
+            }
         } else if (bluetoothService?.getState() == BluetoothService.STATE_CONNECTED) {
             bluetoothService?.write(bytes)
-        } else {
-            // Silenciar Toast si es muy frecuente
-            // Toast.makeText(this, "No conectado", Toast.LENGTH_SHORT).show()
         }
-    }
-    
-    @SuppressLint("MissingPermission")
-    private fun sendBleBytes(bytes: ByteArray) {
-        val characteristic = bleWriteCharacteristic
-        if (bluetoothGatt != null && characteristic != null) {
-            characteristic.value = bytes
-            val properties = characteristic.properties
-            characteristic.writeType = if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
-                BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-            } else {
-                BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-            }
-            bluetoothGatt?.writeCharacteristic(characteristic)
-        } 
-    }
-    
-    // --- Utilidades ---
-    
-    private fun hexStringToByteArray(s: String): ByteArray {
-        val len = s.length
-        val data = ByteArray(len / 2)
-        var i = 0
-        while (i < len) {
-            data[i / 2] = ((Character.digit(s[i], 16) shl 4) + Character.digit(s[i + 1], 16)).toByte()
-            i += 2
-        }
-        return data
     }
     
     private fun findWriteCharacteristic(gatt: BluetoothGatt): BluetoothGattCharacteristic? {
         for (service in gatt.services) {
             for (characteristic in service.characteristics) {
-                val props = characteristic.properties
-                if ((props and BluetoothGattCharacteristic.PROPERTY_WRITE) != 0 ||
-                    (props and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
+                if ((characteristic.properties and (BluetoothGattCharacteristic.PROPERTY_WRITE or BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE)) != 0) {
                     return characteristic
                 }
             }
@@ -869,65 +455,93 @@ class MainActivity : AppCompatActivity() {
 
     @SuppressLint("MissingPermission")
     private fun startScanning() {
-        if (!bluetoothAdapter.isEnabled) {
-            Toast.makeText(this, "Por favor, activa el Bluetooth", Toast.LENGTH_SHORT).show()
-            return
-        }
-
         deviceList.clear()
-        val pairedDevices = bluetoothAdapter.bondedDevices
-        if (!pairedDevices.isNullOrEmpty()) {
-            deviceList.addAll(pairedDevices)
-        }
         deviceAdapter.notifyDataSetChanged()
-        
-        if (bluetoothAdapter.isDiscovering) {
-            bluetoothAdapter.cancelDiscovery()
-        }
         bluetoothAdapter.startDiscovery()
     }
 
-    // --- Gestión de Permisos ---
-
-    private val requestAudioPermissionLauncher = 
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted: Boolean ->
-            if (isGranted) {
-                startAudioAnalysis()
-            } else {
-                Toast.makeText(this, "Permiso de audio denegado", Toast.LENGTH_SHORT).show()
-            }
+    // --- Audio ---
+    
+    private fun toggleMusicMode() {
+        if (!isMusicModeActive) {
+            if (checkAudioPermissions()) startVisualizer()
+        } else {
+            stopVisualizer()
         }
-
-    private val requestBluetoothPermissionLauncher = 
-        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
-            val allGranted = permissions.entries.all { it.value }
-            if (allGranted) {
-                startScanning()
-            } else {
-                Toast.makeText(this, "Permisos de Bluetooth denegados", Toast.LENGTH_SHORT).show()
-            }
+    }
+    
+    private fun startVisualizer() {
+        try {
+            visualizer = android.media.audiofx.Visualizer(0)
+            visualizer?.captureSize = android.media.audiofx.Visualizer.getCaptureSizeRange()[1]
+            visualizer?.setDataCaptureListener(object : OnDataCaptureListener {
+                override fun onWaveFormDataCapture(v: android.media.audiofx.Visualizer, w: ByteArray, s: Int) {}
+                override fun onFftDataCapture(v: android.media.audiofx.Visualizer, fft: ByteArray, s: Int) {
+                    val color = fftToColor(fft)
+                    sendColor(color)
+                    runOnUiThread { viewSelectedColor.setBackgroundColor(color) }
+                }
+            }, android.media.audiofx.Visualizer.getMaxCaptureRate() / 2, false, true)
+            
+            visualizer?.enabled = true
+            isMusicModeActive = true
+            btnMusicMode.text = "Detener Música"
+            btnMusicMode.setBackgroundColor(Color.RED)
+        } catch (e: Exception) {
+            Toast.makeText(this, "Error de audio", Toast.LENGTH_SHORT).show()
         }
+    }
+    
+    private fun stopVisualizer() {
+        visualizer?.enabled = false
+        visualizer?.release()
+        visualizer = null
+        isMusicModeActive = false
+        btnMusicMode.text = "Audio Reactivo"
+        btnMusicMode.setBackgroundColor(Color.parseColor("#40FFFFFF"))
+    }
+    
+    private fun fftToColor(fft: ByteArray): Int {
+        if (fft.isEmpty()) return Color.BLACK
+        val n = fft.size
+        val r = (Math.abs(fft[0].toInt()) * 4).coerceIn(0, 255)
+        val g = (Math.abs(fft[n/2].toInt()) * 4).coerceIn(0, 255)
+        val b = (Math.abs(fft[n-1].toInt()) * 4).coerceIn(0, 255)
+        return Color.rgb(r, g, b)
+    }
+
+    // --- Permisos ---
+
+    private val requestBluetoothPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { 
+        if (it.values.all { granted -> granted }) {
+            if (!attemptAutoConnect()) startScanning()
+        }
+    }
+    
+    private val requestAudioPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { 
+        if (it) startVisualizer() 
+    }
 
     private fun checkPermissions(): Boolean {
-        val permissionsToCheck = mutableListOf<String>()
-
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            permissionsToCheck.add(Manifest.permission.BLUETOOTH_SCAN)
-            permissionsToCheck.add(Manifest.permission.BLUETOOTH_CONNECT)
+            if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                requestBluetoothPermissionLauncher.launch(arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT))
+                return false
+            }
         } else {
-            permissionsToCheck.add(Manifest.permission.ACCESS_FINE_LOCATION)
-            permissionsToCheck.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+             if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                requestBluetoothPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION))
+                return false
+            }
         }
-
-        val missingPermissions = permissionsToCheck.filter {
-            ActivityCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        return true
+    }
+    
+    private fun checkAudioPermissions(): Boolean {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            return false
         }
-
-        return if (missingPermissions.isNotEmpty()) {
-            requestBluetoothPermissionLauncher.launch(missingPermissions.toTypedArray())
-            false
-        } else {
-            true
-        }
+        return true
     }
 }
