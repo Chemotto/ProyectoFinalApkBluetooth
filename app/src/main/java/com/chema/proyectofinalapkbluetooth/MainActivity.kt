@@ -26,6 +26,7 @@ import android.os.Looper
 import android.os.Message
 import android.util.Log
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button
 import android.widget.ImageButton
 import android.widget.RadioGroup
@@ -51,7 +52,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnScan: Button
     private lateinit var btnDisconnect: Button
     private lateinit var rvDevices: RecyclerView
-    private lateinit var layoutControls: ScrollView
+    // Cambiado de ScrollView a ViewGroup para permitir layouts flexibles (ConstraintLayout)
+    private lateinit var layoutControls: ViewGroup 
     
     // Panel de Conexión Desplegable
     private lateinit var panelConnection: CardView
