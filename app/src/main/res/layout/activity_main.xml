@@ -14,7 +14,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="end"
+        android:gravity="center_vertical"
         app:layout_constraintTop_toTopOf="parent">
 
         <TextView
@@ -25,8 +25,7 @@
             android:text="Desconectado"
             android:textStyle="bold"
             android:textSize="14sp"
-            android:textColor="#555555"
-            android:gravity="center_vertical"/>
+            android:textColor="#555555"/>
 
         <ImageButton
             android:id="@+id/btnToggleConnectionPanel"
@@ -49,22 +48,19 @@
         android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@+id/headerLayout"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        android:layout_marginBottom="16dp">
+        app:layout_constraintEnd_toEndOf="parent">
 
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
             android:padding="16dp">
-
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Gestión de Dispositivos"
                 android:textStyle="bold"
                 android:layout_marginBottom="8dp"/>
-
             <TextView
                 android:id="@+id/tvStatus"
                 android:layout_width="match_parent"
@@ -72,12 +68,10 @@
                 android:text="Estado: Inactivo"
                 android:textSize="12sp"
                 android:layout_marginBottom="8dp"/>
-
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal">
-                
                 <Button
                     android:id="@+id/btnScan"
                     android:layout_width="0dp"
@@ -85,7 +79,6 @@
                     android:layout_weight="1"
                     android:text="Escanear"
                     android:layout_marginEnd="4dp"/>
-
                 <Button
                     android:id="@+id/btnDisconnect"
                     android:layout_width="0dp"
@@ -95,14 +88,12 @@
                     android:enabled="false"
                     android:layout_marginStart="4dp"/>
             </LinearLayout>
-
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/rvDevices"
                 android:layout_width="match_parent"
                 android:layout_height="150dp"
                 android:layout_marginTop="8dp"
                 android:background="#FFFFFF"/>
-                
             <Button
                 android:id="@+id/btnClosePanel"
                 style="@style/Widget.AppCompat.Button.Borderless"
@@ -113,223 +104,132 @@
         </LinearLayout>
     </androidx.cardview.widget.CardView>
 
-    <!-- PANEL DE CONTROLES (Siempre visible, pero deshabilitado si no hay conexión) -->
-    <ScrollView
+    <!-- CONTENEDOR DE CONTROLES SIN SCROLL -->
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/layoutControls"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="8dp"
-        app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintTop_toBottomOf="@+id/headerLayout">
-        <!-- Nota: layoutControls ya no depende de rvDevices, sino del header -->
+        app:layout_constraintTop_toBottomOf="@+id/headerLayout"
+        app:layout_constraintBottom_toBottomOf="parent">
 
+        <!-- RUEDA DE COLOR (Flexible) -->
+        <com.chema.proyectofinalapkbluetooth.ColorWheelView
+            android:id="@+id/colorWheel"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:layout_marginBottom="16dp"
+            app:layout_constraintDimensionRatio="1:1"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintBottom_toTopOf="@+id/controlsArea"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"/>
+
+        <!-- VISTA PREVIA (Flotante) -->
+        <View
+            android:id="@+id/viewSelectedColor"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:background="#FFFFFF"
+            android:layout_margin="16dp"
+            app:layout_constraintBottom_toBottomOf="@+id/colorWheel"
+            app:layout_constraintEnd_toEndOf="@+id/colorWheel"/>
+
+        <!-- ÁREA DE CONTROLES INFERIORES -->
         <LinearLayout
+            android:id="@+id/controlsArea"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="vertical"
-            android:gravity="center"
-            android:paddingBottom="32dp">
+            app:layout_constraintBottom_toBottomOf="parent">
 
-            <TextView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Control de Luces"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:gravity="center"
-                android:layout_marginBottom="16dp"/>
-
-            <!-- Selector de Protocolo (OCULTO - Por defecto TRIONES) -->
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Protocolo (Prueba si no responde):"
-                android:textSize="12sp"
-                android:layout_marginBottom="4dp"
-                android:visibility="gone"/>
-                
-            <HorizontalScrollView
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginBottom="16dp"
-                android:visibility="gone">
-                
-                <RadioGroup
-                    android:id="@+id/rgProtocol"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal">
-                    
-                    <RadioButton
-                        android:id="@+id/rbMagic"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Magic"/>
-                        
-                    <RadioButton
-                        android:id="@+id/rbTriones"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Triones"
-                        android:checked="true"/>
-
-                    <RadioButton
-                        android:id="@+id/rbZengge"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Zengge"/>
-                        
-                    <RadioButton
-                        android:id="@+id/rbGeneric"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Raw"/>
-                </RadioGroup>
-            </HorizontalScrollView>
-
-            <!-- Rueda de Color (Color Wheel) -->
-            <com.chema.proyectofinalapkbluetooth.ColorWheelView
-                android:id="@+id/colorWheel"
-                android:layout_width="300dp"
-                android:layout_height="300dp"
-                android:clickable="true"
-                android:focusable="true"
-                android:layout_marginBottom="16dp"/>
-
-            <!-- Indicador de color seleccionado -->
-            <View
-                android:id="@+id/viewSelectedColor"
-                android:layout_width="50dp"
-                android:layout_height="50dp"
-                android:background="#FFFFFF"
-                android:layout_marginBottom="16dp"/>
-
-            <!-- Control de Brillo (MEJORADO) -->
+            <!-- Etiqueta Brillo -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Brillo"
-                android:textStyle="bold"
-                android:layout_marginBottom="8dp"/>
-            
+                android:textSize="12sp"
+                android:textStyle="bold"/>
+
+            <!-- Brillo -->
             <SeekBar
                 android:id="@+id/sbBrightness"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:max="100"
                 android:progress="100"
-                android:layout_marginBottom="24dp"
-                android:paddingHorizontal="8dp"
                 android:progressDrawable="@drawable/seekbar_gradient"
                 android:thumb="@drawable/seekbar_thumb"
                 android:minHeight="20dp"
                 android:maxHeight="20dp"
                 android:splitTrack="false"/>
 
-            <!-- Favoritos -->
+            <!-- Etiqueta Favoritos -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Favoritos (Manten pulsado para guardar)"
+                android:text="Favoritos"
                 android:textSize="12sp"
-                android:layout_marginBottom="8dp"/>
+                android:textStyle="bold"
+                android:layout_marginTop="12dp"/>
 
+            <!-- Favoritos -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginBottom="24dp">
-
-                <Button
-                    android:id="@+id/btnFav1"
-                    android:layout_width="60dp"
-                    android:layout_height="60dp"
-                    android:backgroundTint="#CCCCCC"
-                    android:layout_margin="4dp"/>
-                <Button
-                    android:id="@+id/btnFav2"
-                    android:layout_width="60dp"
-                    android:layout_height="60dp"
-                    android:backgroundTint="#CCCCCC"
-                    android:layout_margin="4dp"/>
-                <Button
-                    android:id="@+id/btnFav3"
-                    android:layout_width="60dp"
-                    android:layout_height="60dp"
-                    android:backgroundTint="#CCCCCC"
-                    android:layout_margin="4dp"/>
-                <Button
-                    android:id="@+id/btnFav4"
-                    android:layout_width="60dp"
-                    android:layout_height="60dp"
-                    android:backgroundTint="#CCCCCC"
-                    android:layout_margin="4dp"/>
+                android:gravity="center">
+                <Button android:id="@+id/btnFav1" android:layout_width="0dp" android:layout_height="50dp" android:layout_weight="1" android:backgroundTint="#CCCCCC" android:layout_margin="4dp"/>
+                <Button android:id="@+id/btnFav2" android:layout_width="0dp" android:layout_height="50dp" android:layout_weight="1" android:backgroundTint="#CCCCCC" android:layout_margin="4dp"/>
+                <Button android:id="@+id/btnFav3" android:layout_width="0dp" android:layout_height="50dp" android:layout_weight="1" android:backgroundTint="#CCCCCC" android:layout_margin="4dp"/>
+                <Button android:id="@+id/btnFav4" android:layout_width="0dp" android:layout_height="50dp" android:layout_weight="1" android:backgroundTint="#CCCCCC" android:layout_margin="4dp"/>
             </LinearLayout>
 
-            <!-- Botones de Efectos y Power -->
+            <!-- Etiqueta Efectos -->
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Modos"
-                android:textStyle="bold"/>
+                android:text="Efectos"
+                android:textSize="12sp"
+                android:textStyle="bold"
+                android:layout_marginTop="12dp"/>
             
+            <!-- Fila 1: Modos -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center">
+                <Button android:id="@+id/btnFlash" style="@style/Widget.AppCompat.Button.Small" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Rápido" android:textSize="10sp"/>
+                <Button android:id="@+id/btnStrobe" style="@style/Widget.AppCompat.Button.Small" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Intermitente" android:textSize="10sp" android:layout_marginStart="8dp"/>
+                <Button android:id="@+id/btnFade" style="@style/Widget.AppCompat.Button.Small" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Suave" android:textSize="10sp" android:layout_marginStart="8dp"/>
+            </LinearLayout>
+
+            <!-- Fila 2: Música y Power -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="horizontal"
                 android:gravity="center"
-                android:layout_marginTop="8dp"
-                android:layout_marginBottom="16dp">
-
-                <Button
-                    android:id="@+id/btnFlash"
-                    style="@style/Widget.AppCompat.Button.Small"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Rápido"
-                    android:layout_marginEnd="8dp"/>
-
-                <Button
-                    android:id="@+id/btnStrobe"
-                    style="@style/Widget.AppCompat.Button.Small"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Intermitente"
-                    android:layout_marginEnd="8dp"/>
-
-                <Button
-                    android:id="@+id/btnFade"
-                    style="@style/Widget.AppCompat.Button.Small"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Suave"/>
+                android:layout_marginTop="8dp">
+                <Button android:id="@+id/btnMusicMode" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Música" android:layout_marginEnd="4dp"/>
+                <Button android:id="@+id/btnPower" android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:text="Power" android:backgroundTint="#E53935" android:layout_marginStart="4dp"/>
             </LinearLayout>
-
-             <!-- Botón Modo Música y Power -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:gravity="center"
-                android:layout_marginBottom="24dp">
-                
-                <Button
-                    android:id="@+id/btnMusicMode"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Música"
-                    android:layout_marginEnd="16dp"/>
-                
-                <Button
-                    android:id="@+id/btnPower"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Power"
-                    android:backgroundTint="#E53935"/>
-            </LinearLayout>
-
         </LinearLayout>
-    </ScrollView>
-
+        
+        <!-- RadioGroup oculto -->
+        <RadioGroup
+            android:id="@+id/rgProtocol"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:visibility="gone"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintStart_toStartOf="parent">
+            <RadioButton android:id="@+id/rbMagic" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Magic"/>
+            <RadioButton android:id="@+id/rbTriones" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Triones" android:checked="true"/>
+            <RadioButton android:id="@+id/rbZengge" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Zengge"/>
+            <RadioButton android:id="@+id/rbGeneric" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Raw"/>
+        </RadioGroup>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 </androidx.constraintlayout.widget.ConstraintLayout>
