@@ -38,8 +38,12 @@ class BluetoothService(private val context: Context, private val handler: Handle
         const val TOAST = "toast"
         const val DEVICE_NAME = "device_name"
 
-        // UUID estándar para SPP (Serial Port Profile)
+        // UUID estándar para SPP (Serial Port Profile) - Este es el más común
         private val MY_UUID_SECURE = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        
+        // UUIDs alternativos conocidos para chips baratos (HM-10, MLT-BT05, etc.)
+        private val UUID_HM_10 = UUID.fromString("0000FFE0-0000-1000-8000-00805F9B34FB")
+        
         private const val TAG = "BluetoothService"
     }
 
@@ -158,7 +162,7 @@ class BluetoothService(private val context: Context, private val handler: Handle
 
             var success = false
             
-            // --- ESTRATEGIA 1: UUID Estándar Seguro ---
+            // --- ESTRATEGIA 1: UUID Estándar Seguro (SPP) ---
             try {
                 Log.d(TAG, "Intento 1: Secure SPP")
                 socket = device.createRfcommSocketToServiceRecord(MY_UUID_SECURE)

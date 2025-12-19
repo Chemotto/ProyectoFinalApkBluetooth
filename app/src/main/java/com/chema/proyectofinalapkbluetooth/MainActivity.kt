@@ -31,6 +31,7 @@ import android.widget.SeekBar
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
+import androidx.cardview.widget.CardView
 import androidx.core.app.ActivityCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -50,6 +51,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var chipStatus: Chip
     private lateinit var btnScan: MaterialButton
     private lateinit var rvDevices: RecyclerView
+    private lateinit var cardDevices: CardView
     private lateinit var colorWheel: ColorWheelView
     private lateinit var viewSelectedColor: View
     private lateinit var sbBrightness: SeekBar
@@ -75,6 +77,10 @@ class MainActivity : AppCompatActivity() {
     private var bleWriteCharacteristic: BluetoothGattCharacteristic? = null
     private var isBleConnected = false
     private var isBleConnecting = false
+    
+    // Control de reintentos
+    private var connectionRetries = 0
+    private val MAX_RETRIES = 3
 
     private var connectedDeviceName: String? = null
     
@@ -88,6 +94,7 @@ class MainActivity : AppCompatActivity() {
         private const val TAG = "MainActivity"
         private const val PREFS_NAME = "LedControlPrefs"
         private const val KEY_LAST_DEVICE = "last_device_address"
+        private const val KEY_SAVED_DEVICES = "saved_device_addresses"
         private const val SAMPLE_RATE = 44100
         private const val BUFFER_SIZE = 1024
         
@@ -106,7 +113,8 @@ class MainActivity : AppCompatActivity() {
                     when (msg.arg1) {
                         BluetoothService.STATE_CONNECTED -> {
                             updateConnectionStatus(true, "Clásico")
-                            connectingDevice?.let { saveLastDevice(it.address) }
+                            connectingDevice?.let { addDeviceToSavedList(it.address) }
+                            connectionRetries = 0
                         }
                         BluetoothService.STATE_CONNECTING -> updateStatusText("Conectando...")
                         BluetoothService.STATE_NONE -> {
@@ -130,29 +138,71 @@ class MainActivity : AppCompatActivity() {
                 if (newState == BluetoothProfile.STATE_CONNECTED) {
                     isBleConnecting = false
                     isBleConnected = true
+                    connectionRetries = 0
                     connectedDeviceName = gatt.device.name ?: "BLE Device"
                     runOnUiThread { 
                         updateStatusText("Descubriendo servicios...")
-                        saveLastDevice(gatt.device.address)
+                        addDeviceToSavedList(gatt.device.address)
                     }
                     gatt.discoverServices()
                 } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
                     isBleConnecting = false
                     isBleConnected = false
-                    runOnUiThread { updateConnectionStatus(false) }
-                    gatt.close()
+                    
+                    if (bluetoothGatt == gatt) {
+                        bluetoothGatt = null
+                        gatt.close()
+                        runOnUiThread { 
+                            updateConnectionStatus(false) 
+                            updateStatusText("Desconectado")
+                            btnScan.isEnabled = true
+                            btnScan.text = "Escanear"
+                        }
+                    } else {
+                        gatt.close()
+                    }
                 }
             } else {
                 Log.e(TAG, "Error BLE: $status")
                 isBleConnecting = false
                 isBleConnected = false
-                runOnUiThread {
-                    updateConnectionStatus(false)
-                    if (status == 133) {
-                         Toast.makeText(this@MainActivity, "Error 133: Reinicia el Bluetooth.", Toast.LENGTH_LONG).show()
+                
+                // Manejo especial de Error 133
+                if (status == 133 && connectionRetries < MAX_RETRIES && gatt.device != null) {
+                    connectionRetries++
+                    Log.w(TAG, "Reintentando conexión ($connectionRetries/$MAX_RETRIES) tras error 133...")
+                    
+                    val device = gatt.device
+                    gatt.close()
+                    if (bluetoothGatt == gatt) bluetoothGatt = null
+                    
+                    runOnUiThread {
+                        updateStatusText("Reintentando... ($connectionRetries)")
                     }
+                    
+                    // Reintentar con un delay mayor
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        connectBle(device)
+                    }, 1000)
+                    
+                    return // Salir para evitar el cierre estándar
                 }
-                gatt.close()
+                
+                if (bluetoothGatt == gatt) {
+                    bluetoothGatt = null
+                    gatt.close()
+                    runOnUiThread {
+                        updateConnectionStatus(false)
+                        // Asegurar que la UI vuelva a estado inicial
+                        btnScan.isEnabled = true
+                        btnScan.text = "Escanear"
+                        if (status == 133) {
+                             Toast.makeText(this@MainActivity, "Error de conexión (133). Reinicia Bluetooth.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                } else {
+                    gatt.close()
+                }
             }
         }
 
@@ -203,6 +253,7 @@ class MainActivity : AppCompatActivity() {
         chipStatus = findViewById(R.id.chipStatus)
         btnScan = findViewById(R.id.btnScan)
         rvDevices = findViewById(R.id.rvDevices)
+        cardDevices = findViewById(R.id.cardDevices) // IMPORTANTE: Inicializar cardDevices
         colorWheel = findViewById(R.id.colorWheel)
         viewSelectedColor = findViewById(R.id.viewSelectedColor)
         sbBrightness = findViewById(R.id.sbBrightness)
@@ -224,7 +275,11 @@ class MainActivity : AppCompatActivity() {
 
         // Listeners
         btnScan.setOnClickListener {
-            if (checkPermissions()) startScanning()
+            if (chipStatus.text.toString().contains("Conectado")) {
+                disconnect()
+            } else {
+                if (checkPermissions()) startScanning()
+            }
         }
         
         colorWheel.onColorChangedListener = { color ->
@@ -303,11 +358,11 @@ class MainActivity : AppCompatActivity() {
             val colorToSave = lastSelectedColor
             prefs.edit().putInt(key, colorToSave).apply()
             
-            // Feedback visual al usuario (Actualizar el TINT, no el background directo)
+            // Feedback visual al usuario
             button.backgroundTintList = ColorStateList.valueOf(colorToSave)
             
             Toast.makeText(this, "Color guardado", Toast.LENGTH_SHORT).show()
-            true // Consumir el evento
+            true 
         }
     }
 
@@ -319,33 +374,49 @@ class MainActivity : AppCompatActivity() {
         stopAudioCapture()
     }
     
-    // --- Auto Connect ---
+    // --- Guardado de dispositivos ---
 
-    private fun saveLastDevice(address: String) {
+    private fun addDeviceToSavedList(address: String) {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        
+        // Guardar como último dispositivo (para autoconexión rápida)
         prefs.edit().putString(KEY_LAST_DEVICE, address).apply()
+        
+        // Agregar a la lista de dispositivos conocidos (multidispositivo)
+        val currentSet = prefs.getStringSet(KEY_SAVED_DEVICES, HashSet()) ?: HashSet()
+        val newSet = HashSet(currentSet)
+        newSet.add(address)
+        prefs.edit().putStringSet(KEY_SAVED_DEVICES, newSet).apply()
     }
 
     private fun getLastDevice(): String? {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         return prefs.getString(KEY_LAST_DEVICE, null)
     }
+    
+    private fun getSavedDevices(): Set<String> {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getStringSet(KEY_SAVED_DEVICES, emptySet()) ?: emptySet()
+    }
 
     @SuppressLint("MissingPermission")
     private fun attemptAutoConnect(): Boolean {
+        // Estrategia: Intentar conectar con el último dispositivo usado
         val lastAddress = getLastDevice()
-        if (lastAddress != null) {
+        if (lastAddress != null && BluetoothAdapter.checkBluetoothAddress(lastAddress)) {
             try {
-                if (BluetoothAdapter.checkBluetoothAddress(lastAddress)) {
-                    val device = bluetoothAdapter.getRemoteDevice(lastAddress)
-                    Log.d(TAG, "Autoconectando a: $lastAddress")
-                    connectToDevice(device)
-                    return true
-                }
+                val device = bluetoothAdapter.getRemoteDevice(lastAddress)
+                Log.d(TAG, "Autoconectando al último: $lastAddress")
+                connectToDevice(device)
+                return true
             } catch (e: Exception) {
-                Log.e(TAG, "Error en autoconexión", e)
+                Log.e(TAG, "Error autoconexión", e)
             }
         }
+        
+        // Si no hay último, o falló, podríamos intentar con la lista de guardados
+        // pero conectar a ciegas a múltiples dispositivos es lento.
+        // Lo mejor es iniciar escaneo y que el usuario elija, o conectar si detectamos uno guardado.
         return false
     }
     
@@ -355,17 +426,24 @@ class MainActivity : AppCompatActivity() {
         if (connected) {
             chipStatus.text = "Conectado ($type)"
             chipStatus.setChipBackgroundColorResource(android.R.color.holo_green_dark)
-            btnScan.isEnabled = false
+            btnScan.isEnabled = true
             btnScan.text = "Desconectar"
-            btnScan.setOnClickListener { disconnect() }
-            rvDevices.visibility = View.GONE
+            // OCULTAR LISTA usando el contenedor CardView
+            cardDevices.visibility = View.GONE
         } else {
             chipStatus.text = "Desconectado"
             chipStatus.setChipBackgroundColorResource(android.R.color.holo_red_dark)
             btnScan.isEnabled = true
             btnScan.text = "Escanear"
-            btnScan.setOnClickListener { if (checkPermissions()) startScanning() }
-            rvDevices.visibility = View.VISIBLE
+            // MOSTRAR LISTA usando el contenedor CardView
+            cardDevices.visibility = View.VISIBLE
+            
+            // Restablecer botón Power a "Encendido" por defecto al desconectar
+            if (!isLightOn) {
+                isLightOn = true
+                btnPower.text = "Encendido"
+                btnPower.alpha = 1.0f
+            }
         }
     }
     
@@ -381,10 +459,11 @@ class MainActivity : AppCompatActivity() {
              if (bluetoothAdapter.isDiscovering) bluetoothAdapter.cancelDiscovery()
         }
         
-        // Guardar dispositivo INMEDIATAMENTE al iniciar el intento de conexión
-        saveLastDevice(device.address)
+        // Guardar dispositivo INMEDIATAMENTE
+        addDeviceToSavedList(device.address)
         
         connectingDevice = device
+        connectionRetries = 0 // Reiniciar contador de reintentos
         updateStatusText("Conectando...")
         
         Handler(Looper.getMainLooper()).postDelayed({
@@ -402,28 +481,47 @@ class MainActivity : AppCompatActivity() {
     
     @SuppressLint("MissingPermission")
     private fun connectBle(device: BluetoothDevice) {
-        disconnectBle()
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
-        } else {
-            bluetoothGatt = device.connectGatt(this, false, gattCallback)
-        }
+        disconnectBle() 
+        Handler(Looper.getMainLooper()).postDelayed({
+            // TRUCO PARA ERROR 133: Usar TRANSPORT_LE y evitar autoConnect=true
+            // El delay antes de conectar es crítico.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                bluetoothGatt = device.connectGatt(this, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            } else {
+                bluetoothGatt = device.connectGatt(this, false, gattCallback)
+            }
+        }, 300) 
     }
     
     @SuppressLint("MissingPermission")
     private fun disconnectBle() {
-        bluetoothGatt?.disconnect()
-        bluetoothGatt?.close()
-        bluetoothGatt = null
-        isBleConnected = false
+        if (bluetoothGatt != null) {
+            bluetoothGatt?.disconnect()
+            bluetoothGatt?.close()
+            bluetoothGatt = null
+        } else {
+             isBleConnected = false
+        }
     }
     
     private fun disconnect() {
+        // Estado intermedio para feedback visual
+        updateStatusText("Desconectando...")
+        btnScan.isEnabled = false // Deshabilitar para evitar múltiples clicks
+        
         isBleConnecting = false
         bluetoothService?.stop()
         disconnectBle()
-        updateConnectionStatus(false)
+        
+        // Detener audio inmediatamente
         stopAudioCapture()
+        
+        // Fallback: Si no hay callback en 2s, forzar UI desconectada
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (!isBleConnected && bluetoothService?.getState() != BluetoothService.STATE_CONNECTED) {
+                updateConnectionStatus(false)
+            }
+        }, 2000)
     }
     
     // --- Comandos ---
@@ -470,10 +568,8 @@ class MainActivity : AppCompatActivity() {
             sendColor(lastSelectedColor)
         } else {
             // "Apagar": Enviar color Negro (0,0,0)
-            // Esto es compatible con TODOS los controladores que aceptan cambio de color
             sendColor(Color.BLACK)
             
-            // Si el modo música está activo, detenerlo para que no vuelva a encender las luces
             if (isMusicModeActive) {
                 toggleMusicMode()
             }
@@ -486,39 +582,21 @@ class MainActivity : AppCompatActivity() {
         val g = Color.green(color)
         val b = Color.blue(color)
         
-        // Efectos estándar Magic Home (Modos 38-44 aprox son fades de color único)
-        // 0x26 = Red Gradual Change
-        // 0x27 = Green Gradual Change
-        // 0x28 = Blue Gradual Change
-        // 0x29 = Yellow Gradual Change
-        // 0x2A = Cyan Gradual Change
-        // 0x2B = Purple/Magenta Gradual Change
-        // 0x2C = White Gradual Change
-        
-        // Determinamos el color predominante
+        // Efectos estándar Magic Home
         return when {
-            // Blancos/Grises -> White Gradual
-            r > 200 && g > 200 && b > 200 -> 0x2C 
-            // Rojos puros -> Red Gradual
-            r > g + 100 && r > b + 100 -> 0x26
-            // Verdes puros -> Green Gradual
-            g > r + 100 && g > b + 100 -> 0x27
-            // Azules puros -> Blue Gradual
-            b > r + 100 && b > g + 100 -> 0x28
-            // Amarillos (Rojo + Verde) -> Yellow Gradual
-            r > 150 && g > 150 && b < 100 -> 0x29
-            // Cian (Verde + Azul) -> Cyan Gradual
-            r < 100 && g > 150 && b > 150 -> 0x2A
-            // Magenta (Rojo + Azul) -> Purple Gradual
-            r > 150 && g < 100 && b > 150 -> 0x2B
-            // Por defecto: Seven Color Cross Fade si no está claro
-            else -> 0x37 
+            r > 200 && g > 200 && b > 200 -> 0x2C // White Gradual
+            r > g + 100 && r > b + 100 -> 0x26 // Red
+            g > r + 100 && g > b + 100 -> 0x27 // Green
+            b > r + 100 && b > g + 100 -> 0x28 // Blue
+            r > 150 && g > 150 && b < 100 -> 0x29 // Yellow
+            r < 100 && g > 150 && b > 150 -> 0x2A // Cyan
+            r > 150 && g < 100 && b > 150 -> 0x2B // Purple
+            else -> 0x37 // Seven Color Cross Fade
         }
     }
     
     private fun sendEffectCommand(effectCode: Int, speed: Int = 16) {
-        // Protocolo de efectos Magic Home estándar para dispositivos que usan color 0x56
-        // Header: 0xBB, Mode: effectCode, Speed: speed, Footer: 0x44
+        // Protocolo de efectos Magic Home estándar: 0xBB ...
         val command = byteArrayOf(0xBB.toByte(), effectCode.toByte(), speed.toByte(), 0x44.toByte())
         sendBytes(command)
     }
@@ -530,7 +608,6 @@ class MainActivity : AppCompatActivity() {
             if (bluetoothGatt != null && characteristic != null) {
                 characteristic.value = bytes
                 
-                // Detección automática de capacidades
                 val properties = characteristic.properties
                 if ((properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE) != 0) {
                     characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
