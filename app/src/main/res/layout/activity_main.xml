@@ -227,7 +227,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Flash"
+            android:text="Continuo"
             android:textColor="@android:color/white"
             app:strokeColor="#40FFFFFF"
             android:layout_marginEnd="8dp"/>
@@ -238,7 +238,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Strobe"
+            android:text="Fiesta"
             android:textColor="@android:color/white"
             app:strokeColor="#40FFFFFF"
             android:layout_marginEnd="8dp"/>
@@ -249,7 +249,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Fade"
+            android:text="Suave"
             android:textColor="@android:color/white"
             app:strokeColor="#40FFFFFF"/>
             
