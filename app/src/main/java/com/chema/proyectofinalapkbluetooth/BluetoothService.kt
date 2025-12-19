@@ -38,8 +38,12 @@ class BluetoothService(private val context: Context, private val handler: Handle
         const val TOAST = "toast"
         const val DEVICE_NAME = "device_name"
 
-        // UUID estándar para SPP (Serial Port Profile)
+        // UUID estándar para SPP (Serial Port Profile) - Este es el más común
         private val MY_UUID_SECURE = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+        
+        // UUIDs alternativos conocidos para chips baratos (HM-10, MLT-BT05, etc.)
+        private val UUID_HM_10 = UUID.fromString("0000FFE0-0000-1000-8000-00805F9B34FB")
+        
         private const val TAG = "BluetoothService"
     }
 
@@ -158,7 +162,7 @@ class BluetoothService(private val context: Context, private val handler: Handle
 
             var success = false
             
-            // --- ESTRATEGIA 1: UUID Estándar Seguro ---
+            // --- ESTRATEGIA 1: UUID Estándar Seguro (SPP) ---
             try {
                 Log.d(TAG, "Intento 1: Secure SPP")
                 socket = device.createRfcommSocketToServiceRecord(MY_UUID_SECURE)
@@ -255,9 +259,11 @@ class BluetoothService(private val context: Context, private val handler: Handle
             while (this@BluetoothService.state == STATE_CONNECTED) {
                 try {
                     val bytes = inputStream.read(buffer)
+                    // Enviar los bytes obtenidos a la Actividad de la UI
                     handler.obtainMessage(MESSAGE_READ, bytes, -1, buffer).sendToTarget()
                 } catch (e: IOException) {
                     Log.e(TAG, "disconnected", e)
+                    // Notificar a la UI que la conexión se ha perdido
                     connectionLost()
                     break
                 }
@@ -267,6 +273,7 @@ class BluetoothService(private val context: Context, private val handler: Handle
         fun write(bytes: ByteArray) {
             try {
                 outputStream.write(bytes)
+                // Compartir el mensaje enviado con la actividad de la UI
                 handler.obtainMessage(MESSAGE_WRITE, -1, -1, bytes).sendToTarget()
             } catch (e: IOException) {
                 Log.e(TAG, "Exception during write", e)
@@ -288,15 +295,22 @@ class BluetoothService(private val context: Context, private val handler: Handle
         bundle.putString(TOAST, "Error al conectar. Verifica que el dispositivo esté encendido.")
         msg.data = bundle
         handler.sendMessage(msg)
+        
+        // IMPORTANTE: Asegurar que el estado vuelva a NONE y notificar a la UI
         setState(STATE_NONE)
     }
 
     private fun connectionLost() {
-        val msg = handler.obtainMessage(MESSAGE_TOAST)
-        val bundle = Bundle()
-        bundle.putString(TOAST, "Conexión perdida")
-        msg.data = bundle
-        handler.sendMessage(msg)
+        // Enviar toast SOLO si estábamos conectados, para evitar spam
+        if (state == STATE_CONNECTED) {
+            val msg = handler.obtainMessage(MESSAGE_TOAST)
+            val bundle = Bundle()
+            bundle.putString(TOAST, "Conexión perdida")
+            msg.data = bundle
+            handler.sendMessage(msg)
+        }
+        
+        // IMPORTANTE: Asegurar que el estado vuelva a NONE y notificar a la UI
         setState(STATE_NONE)
     }
 }
